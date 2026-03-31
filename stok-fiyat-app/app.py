@@ -3,6 +3,10 @@ import csv
 from datetime import datetime
 from pathlib import Path
 
+import re
+import difflib
+
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -35,8 +39,66 @@ CSV_HEADERS = {
 }
 
 
+TURKISH_CHAR_MAP = str.maketrans({
+    "İ": "I",
+    "I": "I",
+    "ı": "I",
+    "Ş": "S",
+    "ş": "S",
+    "Ğ": "G",
+    "ğ": "G",
+    "Ü": "U",
+    "ü": "U",
+    "Ö": "O",
+    "ö": "O",
+    "Ç": "C",
+    "ç": "C",
+})
+
+
 def to_upper(value):
     return str(value).strip().upper() if value is not None else ""
+
+
+def normalize_text(value):
+    text = str(value or "").strip().upper()
+    text = text.translate(TURKISH_CHAR_MAP)
+    text = re.sub(r"[^A-Z0-9ÇŞĞÜÖıIÜĞŞÇ ]", "", text)
+    return text
+
+
+def smart_search_product(query: str, df: pd.DataFrame):
+    if df is None or df.empty or not str(query).strip():
+        return None
+    query = str(query).strip()
+    normalized_query = normalize_text(query)
+    df = df.copy()
+    df["barkod"] = df["barkod"].astype(str).str.strip()
+    df["adi"] = df["adi"].astype(str).str.strip()
+    df["norm_adi"] = df["adi"].apply(normalize_text)
+    df["norm_barkod"] = df["barkod"].astype(str).apply(normalize_text)
+
+    exact_barcode = df[df["barkod"] == query]
+    if len(exact_barcode) > 0:
+        return exact_barcode
+
+    exact_norm_barkod = df[df["norm_barkod"] == normalize_text(query)]
+    if len(exact_norm_barkod) > 0:
+        return exact_norm_barkod
+
+    if normalized_query:
+        substring_name = df[df["norm_adi"].str.contains(normalized_query, na=False)]
+        if len(substring_name) > 0:
+            return substring_name
+
+    ratios = []
+    for _, row in df.iterrows():
+        name_ratio = difflib.SequenceMatcher(None, normalized_query, row["norm_adi"]).ratio()
+        barcode_ratio = difflib.SequenceMatcher(None, normalize_text(row["barkod"]), normalized_query).ratio()
+        ratios.append(max(name_ratio, barcode_ratio))
+    df["match_score"] = ratios
+    best = df[df["match_score"] >= 0.55].sort_values(by="match_score", ascending=False)
+    return best.head(1) if len(best) > 0 else None
 
 
 def ensure_csv(path: Path, headers, default_values=None):
@@ -378,18 +440,23 @@ def save_stock_csv(path: Path, df: pd.DataFrame):
 
 def urun_bul_barkod(barkod: str, df: pd.DataFrame):
     barkod = str(barkod).strip()
-    if not barkod:
+    if not barkod or df is None or df.empty:
         return None
-    sonuc = df[df["barkod"].astype(str).str.strip() == barkod]
-    return sonuc if len(sonuc) > 0 else None
+    sonuc = smart_search_product(barkod, df)
+    return sonuc if isinstance(sonuc, pd.DataFrame) and len(sonuc) > 0 else None
 
 
 def urun_ara_isim(arama: str, df: pd.DataFrame):
-    if not str(arama).strip():
+    if not str(arama).strip() or df is None or df.empty:
         return None
-    maske = df["adi"].astype(str).str.contains(arama.strip(), case=False, na=False)
-    sonuc = df[maske]
-    return sonuc if len(sonuc) > 0 else None
+    normalized_query = normalize_text(arama)
+    df = df.copy()
+    df["norm_adi"] = df["adi"].astype(str).apply(normalize_text)
+    exact = df[df["norm_adi"].str.contains(normalized_query, na=False)]
+    if len(exact) > 0:
+        return exact
+    sonuc = smart_search_product(arama, df)
+    return sonuc if isinstance(sonuc, pd.DataFrame) and len(sonuc) > 0 else None
 
 
 def show_login_screen():
