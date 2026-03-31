@@ -79,6 +79,13 @@ def append_csv(path: Path, row, headers):
         writer.writerow(row)
 
 
+def rerun_app():
+    if hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+    else:
+        st.stop()
+
+
 def normalize_isletme(value):
     if value is None:
         return ALL_ISLETMELER
