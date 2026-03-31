@@ -48,6 +48,27 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 - `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
 - `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
 
+## Stok & Fiyat Kontrol Uygulaması
+
+Klasör: `stok-fiyat-app/`
+
+Streamlit tabanlı Türkçe stok ve fiyat kontrol uygulaması.
+
+- **app.py** — Ana uygulama dosyası (Streamlit)
+- **stok_listesi.csv** — Ürün veritabanı (barkod, adi, fiyat)
+- **fiyat_talepleri.csv** — Kaydedilen talepler (otomatik oluşturulur)
+- **.streamlit/config.toml** — Sunucu yapılandırması (port 5000)
+
+Çalıştırma: `cd stok-fiyat-app && streamlit run app.py --server.port 5000`
+
+### Özellikler
+- Kamera ile barkod tarama (pyzbar)
+- Manuel barkod girişi
+- Ürün adı ve fiyatı büyük gösterim
+- Fiyat talebi formu (yeni fiyat, etiket gerekli, not)
+- Taleplerin tarih/saat ile CSV'ye eklenmesi (append)
+- UTF-8 Türkçe karakter desteği
+
 ## Packages
 
 ### `artifacts/api-server` (`@workspace/api-server`)
