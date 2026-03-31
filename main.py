@@ -8,7 +8,7 @@ from datetime import datetime
 st.set_page_config(
     page_title="Stok ve Fiyat Kontrol",
     page_icon="🏷️",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="collapsed"
 )
 
@@ -143,51 +143,115 @@ def urun_goster_ve_form(urun_row):
             st.session_state.arama_modu = None
             st.rerun()
 
-# MAIN UYGULAMA
-st.markdown("# 📦 STOK VE FIYAT SORGU")
+def goster_sonuc(df_sonuc, prefix=""):
+    if df_sonuc is None or len(df_sonuc) == 0:
+        return
+    if len(df_sonuc) == 1:
+        urun_goster_ve_form(df_sonuc.iloc[0])
+    else:
+        st.info(f"**{len(df_sonuc)} ürün** bulundu — birini seçin:")
+        secenekler = [f"{row['adi']} — {float(row['fiyat']):.2f} ₺"
+                      for _, row in df_sonuc.iterrows()]
+        secim = st.selectbox("Ürün:", secenekler, key=f"secim_{prefix}")
+        idx = secenekler.index(secim)
+        urun_goster_ve_form(df_sonuc.iloc[idx])
+
+# ─── Session State varsayılanları ───────────────────────────────────────────
+defaults = {
+    "bulunan_urunler": None,
+    "talep_gonderildi": False,
+    "arama_modu": None,    # "kamera" | "manuel" | None
+    "son_barkod": "",
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+stok_df = stok_yukle()
+
+# ─── Başlık ─────────────────────────────────────────────────────────────────
+st.markdown("## 🏷️ Stok & Fiyat Kontrol")
+st.caption(f"{len(stok_df):,} ürün yüklendi")
 st.markdown("---")
 
-df = stok_yukle()
+# ─── Sekmeler ────────────────────────────────────────────────────────────────
+tab1, tab2 = st.tabs(["📷 Kamera ile Tara", "🔤 Barkod / İsim Yaz"])
 
-if df.empty:
-    st.error("❌ Stok listesi yüklenemedi!")
-    st.stop()
+# ════════════════════════════════════════════════════════════════════════
+# TAB 1 — Canlı Barkod Tarama
+# ════════════════════════════════════════════════════════════════════════
+with tab1:
+    try:
+        from barcode_scanner import barcode_scanner
 
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("📱 Barkod Okut", use_container_width=True, type="secondary"):
-        st.session_state.arama_modu = "barkod"
+        # Eğer zaten bir ürün bulunduysa → "result" modunda göster (kamera kapalı)
+        # Aksi hâlde → "scanning" modunda açık tara
+        kamera_modu = "result" if st.session_state.son_barkod else "scanning"
 
-with col2:
-    if st.button("🔍 Ürün Ara", use_container_width=True, type="secondary"):
-        st.session_state.arama_modu = "isim"
+        taranan = barcode_scanner(mode=kamera_modu, key="kamera_tarayici")
+
+        # Component null döndürdüyse (kullanıcı "Yeni Tara"ya bastı) → sıfırla
+        if taranan is None and st.session_state.son_barkod:
+            st.session_state.bulunan_urunler = None
+            st.session_state.talep_gonderildi = False
+            st.session_state.son_barkod = ""
+            st.session_state.arama_modu = None
+            st.rerun()
+
+        # Yeni bir barkod geldi mi?
+        if taranan and taranan != st.session_state.son_barkod:
+            st.session_state.son_barkod = taranan
+            st.session_state.talep_gonderildi = False
+            st.session_state.arama_modu = "kamera"
+            sonuc = urun_bul_barkod(taranan, stok_df)
+            st.session_state.bulunan_urunler = sonuc
+            st.rerun()
+
+        # Sonuçları göster
+        if st.session_state.arama_modu == "kamera":
+            st.markdown("---")
+            if st.session_state.bulunan_urunler is not None:
+                goster_sonuc(st.session_state.bulunan_urunler, "kamera")
+            else:
+                st.warning(f"⚠️ **{st.session_state.son_barkod}** barkodlu ürün listede yok.")
+                if st.button("🔄 Yeniden Tara", use_container_width=True):
+                    st.session_state.son_barkod = ""
+                    st.session_state.arama_modu = None
+                    st.rerun()
+    except ImportError:
+        st.warning("📷 Kamera modülü yüklenemedi. Lütfen 'Barkod / İsim Yaz' sekmesini kullanın.")
+
+# ════════════════════════════════════════════════════════════════════════
+# TAB 2 — Manuel Giriş
+# ════════════════════════════════════════════════════════════════════════
+with tab2:
+    st.markdown("**Barkod numarası veya ürün adı girin:**")
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        giris = st.text_input("Arama", placeholder="Barkod no veya ürün adı...",
+                              label_visibility="collapsed")
+    with col2:
+        ara_btn = st.button("🔍 Ara", use_container_width=True, type="primary")
+
+    if ara_btn and giris.strip():
+        st.session_state.talep_gonderildi = False
+        st.session_state.arama_modu = "manuel"
+        sonuc = urun_bul_barkod(giris.strip(), stok_df)
+        if sonuc is None:
+            sonuc = urun_ara_isim(giris.strip(), stok_df)
+        st.session_state.bulunan_urunler = sonuc
+        if sonuc is None:
+            st.error(f"❌ **'{giris.strip()}'** için ürün bulunamadı.")
+    elif ara_btn:
+        st.warning("⚠️ Lütfen bir şey girin.")
+
+    if st.session_state.bulunan_urunler is not None and st.session_state.arama_modu == "manuel":
+        st.markdown("---")
+        goster_sonuc(st.session_state.bulunan_urunler, "manuel")
 
 st.markdown("---")
-
-arama_modu = st.session_state.get("arama_modu")
-
-if arama_modu == "barkod":
-    barkod_girdi = st.text_input("Barkod girin:", key="barkod_input")
-    if barkod_girdi:
-        sonuc = urun_bul_barkod(barkod_girdi, df)
-        if sonuc is not None and len(sonuc) > 0:
-            st.session_state.bulunan_urunler = sonuc
-        else:
-            st.warning("⚠️ Ürün bulunamadı!")
-
-elif arama_modu == "isim":
-    isim_girdi = st.text_input("Ürün adı girin:", key="isim_input")
-    if isim_girdi:
-        sonuc = urun_ara_isim(isim_girdi, df)
-        if sonuc is not None and len(sonuc) > 0:
-            st.session_state.bulunan_urunler = sonuc
-        else:
-            st.warning("⚠️ Ürün bulunamadı!")
-
-# Bulunan ürünleri göster
-bulunan = st.session_state.get("bulunan_urunler")
-if bulunan is not None:
-    for idx, (_, row) in enumerate(bulunan.iterrows()):
-        urun_goster_ve_form(row)
-        if idx < len(bulunan) - 1:
-            st.divider()
+st.markdown(
+    "<p style='text-align:center;color:#ccc;font-size:11px;'>Stok & Fiyat Kontrol • UTF-8</p>",
+    unsafe_allow_html=True
+)
