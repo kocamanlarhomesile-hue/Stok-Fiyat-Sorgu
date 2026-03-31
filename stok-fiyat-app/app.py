@@ -12,6 +12,50 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# ─── Giriş Güvenliği ───────────────────────────────────────────────────────
+DOGRU_SIFRE = "kocamanlar26"
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+def giris_ekrani():
+    """Giriş ekranını göster"""
+    st.markdown(
+        """
+        <div style="display:flex;justify-content:center;align-items:center;min-height:100vh;">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    st.markdown("## 🔐 Giriş Yap")
+    st.markdown("---")
+    
+    with st.form("login_form", clear_on_submit=True):
+        sifre = st.text_input(
+            "🔑 Şifre",
+            type="password",
+            placeholder="Şifrenizi girin...",
+        )
+        submitted = st.form_submit_button(
+            "✅ Giriş Yap",
+            use_container_width=True,
+            type="primary"
+        )
+        
+        if submitted:
+            if sifre == DOGRU_SIFRE:
+                st.session_state.authenticated = True
+                st.success("✅ Giriş başarılı!")
+                st.rerun()
+            else:
+                st.error("❌ Şifre yanlış! Lütfen tekrar deneyin.")
+
+# Eğer kimlik doğrulama başarısız ise, giriş ekranını göster ve çık
+if not st.session_state.authenticated:
+    giris_ekrani()
+    st.stop()
+
 STOK_DOSYASI    = os.path.join(os.path.dirname(__file__), "stok_listesi.csv")
 TALEPLER_DOSYASI = os.path.join(os.path.dirname(__file__), "fiyat_talepleri.csv")
 
