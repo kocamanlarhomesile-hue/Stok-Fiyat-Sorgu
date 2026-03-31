@@ -97,13 +97,14 @@ def urun_goster_ve_form(urun_row):
     else:
         st.success("✅ Talebiniz kaydedildi!")
         if st.button("🔄 Yeni Sorgulama", use_container_width=True):
-            for k in ["bulunan_urunler", "secili_urun_idx", "talep_gonderildi", "arama_modu"]:
-                st.session_state[k] = None if k != "talep_gonderildi" else False
+            st.session_state.bulunan_urunler = None
+            st.session_state.talep_gonderildi = False
             st.session_state.arama_modu = "barkod"
+            st.session_state.son_barkod = ""
             st.rerun()
 
 
-def goster_sonuc(df_sonuc, anahtar_prefix=""):
+def goster_sonuc(df_sonuc, prefix=""):
     if df_sonuc is None or len(df_sonuc) == 0:
         return
     if len(df_sonuc) == 1:
@@ -112,7 +113,7 @@ def goster_sonuc(df_sonuc, anahtar_prefix=""):
         st.info(f"**{len(df_sonuc)} ürün** bulundu — birini seçin:")
         secenekler = [f"{row['adi']} — {float(row['fiyat']):.2f} ₺"
                       for _, row in df_sonuc.iterrows()]
-        secim = st.selectbox("Ürün:", secenekler, key=f"secim_{anahtar_prefix}")
+        secim = st.selectbox("Ürün:", secenekler, key=f"secim_{prefix}")
         idx = secenekler.index(secim)
         urun_goster_ve_form(df_sonuc.iloc[idx])
 
@@ -122,7 +123,7 @@ defaults = {
     "bulunan_urunler": None,
     "talep_gonderildi": False,
     "arama_modu": "barkod",
-    "son_taranan": "",
+    "son_barkod": "",
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -140,26 +141,23 @@ tab1, tab2 = st.tabs(["📷 Kamera ile Tara", "🔤 Barkod / İsim Yaz"])
 
 # ===== TAB 1: CANLI BARKOD TARAMA =====
 with tab1:
-    try:
-        from streamlit_qrcode_scanner import qrcode_scanner
-        st.markdown("**Kamerayı barkoda doğrultun — otomatik algılar:**")
-        taranan = qrcode_scanner(key="kamera_tarayici")
+    from barcode_scanner import barcode_scanner
 
-        if taranan and taranan != st.session_state.son_taranan:
-            st.session_state.son_taranan = taranan
-            st.session_state.talep_gonderildi = False
-            st.session_state.arama_modu = "barkod"
-            sonuc = urun_bul_barkod(taranan, stok_df)
-            st.session_state.bulunan_urunler = sonuc
-            if sonuc is None:
-                st.warning(f"⚠️ **{taranan}** barkodlu ürün listede bulunamadı.")
+    st.markdown("**Kamerayı barkoda tutun — EAN-13 otomatik algılar:**")
+    taranan = barcode_scanner(key="kamera_tarayici")
 
-        if st.session_state.bulunan_urunler is not None and st.session_state.arama_modu == "barkod":
-            st.markdown("---")
-            goster_sonuc(st.session_state.bulunan_urunler, "kamera")
+    if taranan and taranan != st.session_state.son_barkod:
+        st.session_state.son_barkod = taranan
+        st.session_state.talep_gonderildi = False
+        st.session_state.arama_modu = "kamera"
+        sonuc = urun_bul_barkod(taranan, stok_df)
+        st.session_state.bulunan_urunler = sonuc
+        if sonuc is None:
+            st.warning(f"⚠️ **{taranan}** barkodlu ürün listede yok.")
 
-    except Exception as e:
-        st.error(f"Kamera bileşeni yüklenemedi: {e}")
+    if st.session_state.bulunan_urunler is not None and st.session_state.arama_modu == "kamera":
+        st.markdown("---")
+        goster_sonuc(st.session_state.bulunan_urunler, "kamera")
 
 # ===== TAB 2: MANUEL GİRİŞ =====
 with tab2:
@@ -175,19 +173,12 @@ with tab2:
     if ara_btn and giris.strip():
         st.session_state.talep_gonderildi = False
         st.session_state.arama_modu = "manuel"
-
-        # Önce barkod dene
         sonuc = urun_bul_barkod(giris.strip(), stok_df)
-
-        # Barkodda yoksa isme göre ara
         if sonuc is None:
             sonuc = urun_ara_isim(giris.strip(), stok_df)
-
         st.session_state.bulunan_urunler = sonuc
-
         if sonuc is None:
             st.error(f"❌ **'{giris.strip()}'** için ürün bulunamadı.")
-
     elif ara_btn:
         st.warning("⚠️ Lütfen bir şey girin.")
 

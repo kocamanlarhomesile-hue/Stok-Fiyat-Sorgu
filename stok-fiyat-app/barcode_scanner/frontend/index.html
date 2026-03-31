@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Barkod Tarayıcı</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #fff; }
+    #reader {
+      width: 100%;
+      max-width: 400px;
+      margin: 0 auto;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    #reader video { border-radius: 10px; }
+    #status {
+      text-align: center;
+      padding: 8px;
+      font-size: 14px;
+      color: #555;
+      margin-top: 4px;
+    }
+    #result-box {
+      display: none;
+      background: #e8f5e9;
+      border: 2px solid #4caf50;
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+      margin-top: 8px;
+    }
+    #result-box span {
+      font-size: 18px;
+      font-weight: bold;
+      color: #2e7d32;
+    }
+    #rescan-btn {
+      display: none;
+      margin: 8px auto 0;
+      padding: 8px 20px;
+      background: #1976d2;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      width: 100%;
+      max-width: 400px;
+    }
+  </style>
+</head>
+<body>
+  <div id="reader"></div>
+  <div id="status">📷 Barkodu çerçeveye getirin...</div>
+  <div id="result-box">✅ Okundu: <span id="barcode-text"></span></div>
+  <button id="rescan-btn" onclick="startScanner()">🔄 Tekrar Tara</button>
+
+  <script>
+    let scanner = null;
+    let scanning = true;
+
+    // Streamlit component protocol
+    function setFrameHeight(h) {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setFrameHeight",
+        height: h
+      }, "*");
+    }
+
+    function sendBarcodeToStreamlit(value) {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setComponentValue",
+        value: value,
+        dataType: "json"
+      }, "*");
+    }
+
+    function onScanSuccess(decodedText) {
+      if (!scanning) return;
+      scanning = false;
+
+      document.getElementById("status").style.display = "none";
+      document.getElementById("result-box").style.display = "block";
+      document.getElementById("barcode-text").textContent = decodedText;
+      document.getElementById("rescan-btn").style.display = "block";
+
+      if (scanner) {
+        scanner.stop().catch(() => {});
+      }
+
+      sendBarcodeToStreamlit(decodedText);
+      setFrameHeight(document.body.scrollHeight + 20);
+    }
+
+    function startScanner() {
+      scanning = true;
+      document.getElementById("status").textContent = "📷 Barkodu çerçeveye getirin...";
+      document.getElementById("status").style.display = "block";
+      document.getElementById("result-box").style.display = "none";
+      document.getElementById("rescan-btn").style.display = "none";
+
+      if (scanner) {
+        scanner.clear();
+      }
+
+      scanner = new Html5Qrcode("reader");
+
+      const config = {
+        fps: 15,
+        qrbox: { width: 280, height: 120 },
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.QR_CODE,
+        ],
+        aspectRatio: 1.5,
+        showTorchButtonIfSupported: true,
+        videoConstraints: {
+          facingMode: { ideal: "environment" }
+        }
+      };
+
+      scanner.start(
+        { facingMode: { ideal: "environment" } },
+        config,
+        onScanSuccess,
+        () => {}
+      ).then(() => {
+        setFrameHeight(document.body.scrollHeight + 20);
+      }).catch((err) => {
+        document.getElementById("status").textContent = "⚠️ Kamera açılamadı: " + err;
+        setFrameHeight(document.body.scrollHeight + 20);
+      });
+    }
+
+    // Streamlit ready handshake
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "streamlit:render") {
+        startScanner();
+      }
+    });
+
+    // Signal component ready
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:componentReady",
+      apiVersion: 1
+    }, "*");
+
+    setFrameHeight(380);
+  </script>
+</body>
+</html>
