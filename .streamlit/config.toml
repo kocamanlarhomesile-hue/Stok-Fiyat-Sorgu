@@ -1,4 +1,11 @@
 [server]
 headless = true
 address = "0.0.0.0"
-port = 5000
+port = 8501
+
+[client]
+showErrorDetails = true
+toolbarMode = "viewer"
+
+[logger]
+level = "info"
