@@ -314,7 +314,7 @@ def show_login_screen():
                         st.session_state.current_role = result["role"]
                         st.session_state.current_isletme = selected_isletme
                         st.success("GİRİŞ BAŞARILI. HOŞGELDİNİZ {}".format(result["username"]))
-                        st.experimental_rerun()
+                        rerun_app()
                 else:
                     st.error("KULLANICI ADI VEYA ŞİFRE HATALI.")
 
@@ -359,7 +359,7 @@ with st.sidebar:
         st.session_state.current_user = ""
         st.session_state.current_role = ""
         st.session_state.current_isletme = DEFAULT_ISLETME
-        st.experimental_rerun()
+        rerun_app()
 
 
 def display_admin_panel():
@@ -451,14 +451,14 @@ def display_admin_panel():
                     selected_isletme = "MARKET"
                 update_user_isletme(manage_username, selected_isletme)
                 st.success("PERSONEL BİLGİLERİ GÜNCELLENDİ.")
-                st.experimental_rerun()
+                rerun_app()
 
         if st.button("PERSONELİ SİL"):
             if manage_username == "ADMIN":
                 st.error("ADMIN KAYDI SİLİNEMEZ.")
             elif delete_user(manage_username):
                 st.success("PERSONEL SİLİNDİ.")
-                st.experimental_rerun()
+                rerun_app()
             else:
                 st.error("PERSONEL SİLİNEMEDİ.")
 
@@ -486,7 +486,7 @@ def display_admin_panel():
                     selected_isletme = "MARKET"
                 if save_user(yeni_username, yeni_password, yeni_role, selected_isletme):
                     st.success("YENİ KULLANICI KAYDEDİLDİ.")
-                    st.experimental_rerun()
+                    rerun_app()
                 else:
                     st.warning("BU KULLANICI ZATEN MEVCUT.")
 
@@ -494,11 +494,11 @@ def display_admin_panel():
     if col1.button("LOGLARI SIFIRLA"):
         ensure_csv(LOG_DOSYASI, CSV_HEADERS["loglar"])
         st.success("LOG KAYITLARI TEMİZLENDİ.")
-        st.experimental_rerun()
+        rerun_app()
     if col2.button("TALEPLERI SIFIRLA"):
         ensure_csv(TALEPLER_DOSYASI, CSV_HEADERS["talepler"])
         st.success("TALEP KAYITLARI TEMİZLENDİ.")
-        st.experimental_rerun()
+        rerun_app()
 
 
 
@@ -520,7 +520,7 @@ def display_main_panel():
             st.session_state.talep_gonderildi = False
             st.session_state.son_barkod = ""
             st.session_state.arama_modu = None
-            st.experimental_rerun()
+            rerun_app()
 
         if taranan and taranan != st.session_state.son_barkod:
             st.session_state.son_barkod = taranan
@@ -530,7 +530,7 @@ def display_main_panel():
             st.session_state.bulunan_urunler = sonuc
             urun_adi = sonuc.iloc[0]["adi"] if sonuc is not None and len(sonuc) > 0 else ""
             log_kaydet(st.session_state.current_user, taranan, urun_adi)
-            st.experimental_rerun()
+            rerun_app()
 
         if st.session_state.arama_modu == "kamera":
             st.markdown("---")
@@ -541,7 +541,7 @@ def display_main_panel():
                 if st.button("YENIDEN TARA", use_container_width=True):
                     st.session_state.son_barkod = ""
                     st.session_state.arama_modu = None
-                    st.experimental_rerun()
+                    rerun_app()
 
     with tab2:
         st.markdown("**BARKOD NUMARASI VEYA URUN ADI GIRIN:**")
@@ -591,7 +591,7 @@ def display_main_panel():
             st.session_state.pending_price_request = None
             st.session_state.price_warning = False
             st.success("TALEP ONAYLANDI VE KAYDEDILDI.")
-            st.experimental_rerun()
+            rerun_app()
         if col2.button("VAZGEÇ"):
             st.session_state.pending_price_request = None
             st.session_state.price_warning = False
@@ -680,7 +680,7 @@ def urun_goster_ve_form(urun_row):
             st.session_state.talep_gonderildi = False
             st.session_state.son_barkod = ""
             st.session_state.arama_modu = None
-            st.experimental_rerun()
+            rerun_app()
 
 
 @st.cache_data(ttl=60)
