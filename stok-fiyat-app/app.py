@@ -448,15 +448,6 @@ if "pending_price_request" not in st.session_state:
 if "price_warning" not in st.session_state:
     st.session_state.price_warning = False
 
-if "secure_stock_updated" not in st.session_state:
-    st.session_state.secure_stock_updated = False
-
-if "secure_stock_download" not in st.session_state:
-    st.session_state.secure_stock_download = None
-
-if "secure_stock_filename" not in st.session_state:
-    st.session_state.secure_stock_filename = ""
-
 if not st.session_state.authenticated:
     show_login_screen()
     st.stop()
@@ -635,23 +626,8 @@ def display_admin_panel():
                         new_stock_df = new_stock_df[new_stock_df["fiyat"].notna() & (new_stock_df["fiyat"] > 0)].copy()
                     backup_stock_file(target_stock_path)
                     save_stock_csv(target_stock_path, new_stock_df)
-                    csv_bytes = new_stock_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-                    st.session_state.secure_stock_updated = True
-                    st.session_state.secure_stock_download = csv_bytes
-                    st.session_state.secure_stock_filename = f"{target_stock_path.name}"
                     st.success("VERİLER GÜNCELLENDİ. YEDEK yedek_stok.csv OLARAK KAYDEDİLDİ.")
                     rerun_app()
-
-    if st.session_state.get("secure_stock_updated", False):
-        st.markdown("---")
-        st.warning("DİKKAT: BU DEĞİŞİKLİKLERİN KALICI OLMASI İÇİN LÜTFEN İNDİRİLEN DOSYAYI GITHUB REPOSUNA YÜKLEYİNİZ.")
-        st.download_button(
-            "GÜNCELLENMİŞ CSV'Yİ İNDİR",
-            st.session_state.secure_stock_download,
-            file_name=st.session_state.secure_stock_filename,
-            mime="text/csv",
-            key="secure_stock_download_button",
-        )
 
     st.markdown("---")
     st.subheader("YENİ KULLANICI EKLE")
