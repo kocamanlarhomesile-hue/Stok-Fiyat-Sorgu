@@ -8,6 +8,9 @@ _barcode_scanner = components.declare_component(
     path=_FRONTEND_DIR
 )
 
-def barcode_scanner(key=None):
-    """EAN-13 ve diğer barkod türlerini okuyan canlı tarayıcı bileşeni."""
-    return _barcode_scanner(key=key, default=None)
+def barcode_scanner(mode="scanning", key=None):
+    """
+    mode="scanning" → kamera açık, tarama bekliyor
+    mode="result"   → kamera kapalı, sonuç gösteriliyor
+    """
+    return _barcode_scanner(key=key, default=None, mode=mode)

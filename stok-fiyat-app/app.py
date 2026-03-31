@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-STOK_DOSYASI = os.path.join(os.path.dirname(__file__), "stok_listesi.csv")
+STOK_DOSYASI    = os.path.join(os.path.dirname(__file__), "stok_listesi.csv")
 TALEPLER_DOSYASI = os.path.join(os.path.dirname(__file__), "fiyat_talepleri.csv")
 
 
@@ -64,9 +64,9 @@ def urun_goster_ve_form(urun_row):
         f"""
         <div style="background:#f0f8ff;border-radius:12px;padding:24px;
                     text-align:center;margin-bottom:16px;border:1px solid #cce0ff;">
-            <p style="font-size:12px;color:#888;margin:0;letter-spacing:1px;">ÜRÜN ADI</p>
-            <h2 style="font-size:26px;color:#1a1a2e;margin:8px 0;line-height:1.2;">{urun_row['adi']}</h2>
-            <p style="font-size:12px;color:#888;margin:0;letter-spacing:1px;">MEVCUT FİYAT</p>
+            <p style="font-size:11px;color:#888;margin:0;letter-spacing:1px;">ÜRÜN ADI</p>
+            <h2 style="font-size:24px;color:#1a1a2e;margin:8px 0;line-height:1.3;">{urun_row['adi']}</h2>
+            <p style="font-size:11px;color:#888;margin:0;letter-spacing:1px;">MEVCUT FİYAT</p>
             <h1 style="font-size:52px;color:#e63946;margin:8px 0;font-weight:bold;">{float(urun_row['fiyat']):.2f} ₺</h1>
             <p style="font-size:11px;color:#bbb;margin:0;">Barkod: {urun_row['barkod']}</p>
         </div>
@@ -96,11 +96,11 @@ def urun_goster_ve_form(urun_row):
                     st.error(f"❌ Kayıt hatası: {e}")
     else:
         st.success("✅ Talebiniz kaydedildi!")
-        if st.button("🔄 Yeni Sorgulama", use_container_width=True):
+        if st.button("🔄 Yeni Sorgulama", use_container_width=True, type="primary"):
             st.session_state.bulunan_urunler = None
             st.session_state.talep_gonderildi = False
-            st.session_state.arama_modu = "barkod"
             st.session_state.son_barkod = ""
+            st.session_state.arama_modu = None
             st.rerun()
 
 
@@ -118,11 +118,11 @@ def goster_sonuc(df_sonuc, prefix=""):
         urun_goster_ve_form(df_sonuc.iloc[idx])
 
 
-# --- Session State ---
+# ─── Session State varsayılanları ───────────────────────────────────────────
 defaults = {
     "bulunan_urunler": None,
     "talep_gonderildi": False,
-    "arama_modu": "barkod",
+    "arama_modu": None,    # "kamera" | "manuel" | None
     "son_barkod": "",
 }
 for k, v in defaults.items():
@@ -131,35 +131,58 @@ for k, v in defaults.items():
 
 stok_df = stok_yukle()
 
-# --- Başlık ---
+# ─── Başlık ─────────────────────────────────────────────────────────────────
 st.markdown("## 🏷️ Stok & Fiyat Kontrol")
 st.caption(f"{len(stok_df):,} ürün yüklendi")
 st.markdown("---")
 
-# --- Sekmeler ---
+# ─── Sekmeler ────────────────────────────────────────────────────────────────
 tab1, tab2 = st.tabs(["📷 Kamera ile Tara", "🔤 Barkod / İsim Yaz"])
 
-# ===== TAB 1: CANLI BARKOD TARAMA =====
+# ════════════════════════════════════════════════════════════════════════
+# TAB 1 — Canlı Barkod Tarama
+# ════════════════════════════════════════════════════════════════════════
 with tab1:
     from barcode_scanner import barcode_scanner
 
-    st.markdown("**Kamerayı barkoda tutun — EAN-13 otomatik algılar:**")
-    taranan = barcode_scanner(key="kamera_tarayici")
+    # Eğer zaten bir ürün bulunduysa → "result" modunda göster (kamera kapalı)
+    # Aksi hâlde → "scanning" modunda açık tara
+    kamera_modu = "result" if st.session_state.son_barkod else "scanning"
 
+    taranan = barcode_scanner(mode=kamera_modu, key="kamera_tarayici")
+
+    # Component null döndürdüyse (kullanıcı "Yeni Tara"ya bastı) → sıfırla
+    if taranan is None and st.session_state.son_barkod:
+        st.session_state.bulunan_urunler = None
+        st.session_state.talep_gonderildi = False
+        st.session_state.son_barkod = ""
+        st.session_state.arama_modu = None
+        st.rerun()
+
+    # Yeni bir barkod geldi mi?
     if taranan and taranan != st.session_state.son_barkod:
         st.session_state.son_barkod = taranan
         st.session_state.talep_gonderildi = False
         st.session_state.arama_modu = "kamera"
         sonuc = urun_bul_barkod(taranan, stok_df)
         st.session_state.bulunan_urunler = sonuc
-        if sonuc is None:
-            st.warning(f"⚠️ **{taranan}** barkodlu ürün listede yok.")
+        st.rerun()
 
-    if st.session_state.bulunan_urunler is not None and st.session_state.arama_modu == "kamera":
+    # Sonuçları göster
+    if st.session_state.arama_modu == "kamera":
         st.markdown("---")
-        goster_sonuc(st.session_state.bulunan_urunler, "kamera")
+        if st.session_state.bulunan_urunler is not None:
+            goster_sonuc(st.session_state.bulunan_urunler, "kamera")
+        else:
+            st.warning(f"⚠️ **{st.session_state.son_barkod}** barkodlu ürün listede yok.")
+            if st.button("🔄 Yeniden Tara", use_container_width=True):
+                st.session_state.son_barkod = ""
+                st.session_state.arama_modu = None
+                st.rerun()
 
-# ===== TAB 2: MANUEL GİRİŞ =====
+# ════════════════════════════════════════════════════════════════════════
+# TAB 2 — Manuel Giriş
+# ════════════════════════════════════════════════════════════════════════
 with tab2:
     st.markdown("**Barkod numarası veya ürün adı girin:**")
 
@@ -187,5 +210,7 @@ with tab2:
         goster_sonuc(st.session_state.bulunan_urunler, "manuel")
 
 st.markdown("---")
-st.markdown("<p style='text-align:center;color:#ccc;font-size:11px;'>Stok & Fiyat Kontrol • UTF-8</p>",
-            unsafe_allow_html=True)
+st.markdown(
+    "<p style='text-align:center;color:#ccc;font-size:11px;'>Stok & Fiyat Kontrol • UTF-8</p>",
+    unsafe_allow_html=True
+)
