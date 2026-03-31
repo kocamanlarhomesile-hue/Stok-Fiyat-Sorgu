@@ -438,6 +438,43 @@ def save_stock_csv(path: Path, df: pd.DataFrame):
     df.to_csv(path, index=False, encoding="utf-8-sig")
 
 
+def find_stock_item(path: Path, query: str):
+    if not str(query).strip():
+        return None
+    df = load_stock_csv(path)
+    if df.empty:
+        return None
+    exact = df[df["barkod"].astype(str).str.strip() == str(query).strip()]
+    if len(exact) > 0:
+        return exact
+    return smart_search_product(query, df)
+
+
+def update_single_stock_product(path: Path, query: str, yeni_adi: str, yeni_fiyat):
+    if not str(query).strip():
+        return False
+    df = load_stock_csv(path)
+    if df.empty:
+        return False
+    matched = df[df["barkod"].astype(str).str.strip() == str(query).strip()]
+    if len(matched) == 0:
+        matched = smart_search_product(query, df)
+    if matched is None or matched.empty:
+        return False
+    idx = matched.index[0]
+    if str(yeni_adi).strip():
+        df.at[idx, "adi"] = to_upper(yeni_adi)
+    if yeni_fiyat is not None and float(yeni_fiyat) > 0:
+        df.at[idx, "fiyat"] = float(yeni_fiyat)
+    backup_stock_file(path)
+    save_stock_csv(path, df)
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+    return True
+
+
 def urun_bul_barkod(barkod: str, df: pd.DataFrame):
     barkod = str(barkod).strip()
     if not barkod or df is None or df.empty:
@@ -561,8 +598,36 @@ def display_admin_panel():
             log_df = log_df[log_df["Isletme"].astype(str).apply(lambda v: selected_filter in parse_isletme_list(v))]
 
         if not log_df.empty:
-            st.subheader("SORGULAMA ÖZETİ")
+            if "Sorgulanan_Barkod" in log_df.columns:
+                log_df["Sorgulanan_Barkod"] = log_df["Sorgulanan_Barkod"].astype(str).str.upper()
+            else:
+                log_df["Sorgulanan_Barkod"] = ""
+            if "Urun_Adi" not in log_df.columns:
+                log_df["Urun_Adi"] = log_df["Sorgulanan_Barkod"].astype(str).str.upper()
+            else:
+                log_df["Urun_Adi"] = log_df["Urun_Adi"].astype(str).str.upper()
+                log_df["Urun_Adi"] = log_df["Urun_Adi"].mask(log_df["Urun_Adi"] == "", log_df["Sorgulanan_Barkod"])
+            st.subheader("EN ÇOK SORGULANAN 10 ÜRÜN")
+            product_counts = (
+                log_df.groupby("Urun_Adi")
+                .size()
+                .reset_index(name="Sorgulama_Sayisi")
+                .sort_values(by="Sorgulama_Sayisi", ascending=False)
+            )
+            if not product_counts.empty:
+                top_products = product_counts.head(10).copy()
+                top_products["Urun_Adi"] = top_products["Urun_Adi"].astype(str).str.upper()
+                chart = alt.Chart(top_products).mark_bar(color="#1f77b4").encode(
+                    x=alt.X("Sorgulama_Sayisi:Q", title="SORGULAMA SAYISI"),
+                    y=alt.Y("Urun_Adi:N", sort=alt.SortField("Sorgulama_Sayisi", order="descending"), title="ÜRÜN"),
+                    tooltip=["Urun_Adi", "Sorgulama_Sayisi"]
+                ).properties(height=450)
+                st.altair_chart(chart, use_container_width=True)
+                st.table(top_products)
+            st.markdown("---")
+            st.subheader("PERSONEL AKTİVİTESİ")
             summary = log_df.groupby("Kullanici").size().reset_index(name="Sorgulama_Sayisi")
+            summary["Kullanici"] = summary["Kullanici"].astype(str).str.upper()
             st.table(summary.sort_values(by="Sorgulama_Sayisi", ascending=False))
             st.markdown("**DETAYLI LOG KAYDI**")
             st.dataframe(log_df)
@@ -639,6 +704,47 @@ def display_admin_panel():
                 rerun_app()
             else:
                 st.error("PERSONEL SİLİNEMEDİ.")
+
+    st.markdown("---")
+    st.subheader("TEK ÜRÜN DÜZENLE")
+    edit_isletme_choice = st.selectbox(
+        "DÜZENLENECEK İŞLETME",
+        [ISLETME_OPTIONS["HOME"], ISLETME_OPTIONS["MARKET"]],
+        index=0,
+        key="single_edit_isletme",
+    )
+    edit_stock_path = STOK_DOSYASI_HOME if edit_isletme_choice == ISLETME_OPTIONS["HOME"] else STOK_DOSYASI_MARKET
+    search_value = st.text_input("BARKOD VEYA ÜRÜN ADI", placeholder="BARKOD VEYA ÜRÜN ADI GİRİN", key="single_edit_search")
+    if st.button("ÜRÜNÜ BUL", key="single_edit_find"):
+        st.session_state.single_edit_query = search_value.strip()
+        st.session_state.single_edit_result = None
+        rerun_app()
+
+    if st.session_state.get("single_edit_query"):
+        single_result = find_stock_item(edit_stock_path, st.session_state.single_edit_query)
+        if single_result is None or single_result.empty:
+            st.error(f"{st.session_state.single_edit_query} İÇİN ÜRÜN BULUNAMADI.")
+        else:
+            product = single_result.iloc[0]
+            st.markdown(f"**BULUNAN ÜRÜN:** {to_upper(product['adi'])} — BARKOD: {to_upper(product['barkod'])}")
+            with st.form("single_edit_form", clear_on_submit=False):
+                yeni_adi = st.text_input("YENİ ÜRÜN ADI", value=to_upper(product['adi']))
+                yeni_fiyat = st.number_input(
+                    "YENİ FİYAT (TL)",
+                    min_value=0.01,
+                    value=float(product['fiyat']) if product['fiyat'] not in [None, ""] else 0.01,
+                    step=0.25,
+                    format="%.2f",
+                )
+                submit_single_edit = st.form_submit_button("DEĞİŞİKLİKLERİ KAYDET")
+                if submit_single_edit:
+                    if update_single_stock_product(edit_stock_path, st.session_state.single_edit_query, yeni_adi, yeni_fiyat):
+                        st.success("ÜRÜN BİLGİLERİ GÜNCELLENDİ.")
+                        st.warning("BU GÜNCELLEME GITHUB'DA KALICI DEĞİLDİR, LÜTFEN DOSYAYI İNDİRİP MANUEL YÜKLEYİN.")
+                        st.session_state.single_edit_query = ""
+                        rerun_app()
+                    else:
+                        st.error("ÜRÜN GÜNCELENEMEDİ. LÜTFEN BARKODU KONTROL EDİN.")
 
     st.markdown("---")
     st.subheader("GÜVENLİ VERİ GÜNCELLEME")
