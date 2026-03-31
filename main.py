@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import csv
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -24,6 +25,13 @@ CSV_HEADERS = {
     "loglar": ["Tarih_Saat", "Kullanici", "Sorgulanan_Barkod", "Urun_Adi"],
     "talepler": ["Tarih", "Kullanici", "Barkod", "Urun_Adi", "Eski_Fiyat", "Yeni_Fiyat_Talebi", "Etiket_Talebi", "Not"]
 }
+
+logger = logging.getLogger("stok_fiyat")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(handler)
 
 
 def to_upper(value):
@@ -68,6 +76,7 @@ def validate_user(username: str, password: str):
     users = load_users()
     username = to_upper(username)
     password = to_upper(password)
+    logger.info("Giriş denemesi: %s", username)
     matched = users[(users["username"] == username) & (users["password"] == password)]
     if len(matched) == 0:
         return None
@@ -79,6 +88,7 @@ def save_user(username: str, password: str, role: str):
     password = to_upper(password)
     role = to_upper(role)
     users = load_users()
+    logger.info("Yeni kullanıcı oluşturma isteği: %s rol=%s", username, role)
     if ((users["username"] == username) & (users["role"] == role)).any():
         return False
     append_csv(USERS_DOSYASI, [username, password, role], CSV_HEADERS["users"])
@@ -92,6 +102,7 @@ def ensure_logs():
 def log_kaydet(kullanici: str, barkod: str, urun_adi: str):
     ensure_logs()
     simdi = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logger.info("Log kaydı: %s %s %s", kullanici, barkod, urun_adi)
     append_csv(
         LOG_DOSYASI,
         [
@@ -110,6 +121,7 @@ def ensure_talepler():
 
 def talep_kaydet(barkod, urun_adi, mevcut_fiyat, yeni_fiyat, etiket_gerekli, not_metni, kullanici):
     ensure_talepler()
+    logger.info("Talep kaydı: %s %s -> %s kullanici=%s", barkod, mevcut_fiyat, yeni_fiyat, kullanici)
     append_csv(
         TALEPLER_DOSYASI,
         [
@@ -134,6 +146,13 @@ def load_dataframe(path: Path, encoding="utf-8-sig"):
         return df
     except Exception:
         return pd.DataFrame()
+
+
+def rerun_app():
+    if hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+    else:
+        st.stop()
 
 
 def urun_bul_barkod(barkod: str, df: pd.DataFrame):
@@ -176,7 +195,7 @@ def show_login_screen():
                     st.session_state.current_user = result["username"]
                     st.session_state.current_role = result["role"]
                     st.success("GİRİŞ BAŞARILI. HOŞGELDİNİZ {}".format(result["username"]))
-                    st.experimental_rerun()
+                    rerun_app()
                 else:
                     st.error("KULLANICI ADI VEYA ŞİFRE HATALI.")
 
@@ -251,7 +270,7 @@ def display_admin_panel():
                 st.error("KULLANICI ADI VE ŞİFRE BOŞ BIRAKILAMAZ.")
             elif save_user(yeni_username, yeni_password, yeni_role):
                 st.success("YENİ KULLANICI KAYDEDİLDİ.")
-                st.experimental_rerun()
+                rerun_app()
             else:
                 st.warning("BU KULLANICI ZATEN MEVCUT.")
 
@@ -259,11 +278,11 @@ def display_admin_panel():
     if col1.button("LOGLARI SIFIRLA"):
         ensure_csv(LOG_DOSYASI, CSV_HEADERS["loglar"])
         st.success("LOG KAYITLARI TEMİZLENDİ.")
-        st.experimental_rerun()
+        rerun_app()
     if col2.button("TALEPLERI SIFIRLA"):
         ensure_csv(TALEPLER_DOSYASI, CSV_HEADERS["talepler"])
         st.success("TALEP KAYITLARI TEMİZLENDİ.")
-        st.experimental_rerun()
+        rerun_app()
 
 
 def display_main_panel():
@@ -284,7 +303,7 @@ def display_main_panel():
             st.session_state.talep_gonderildi = False
             st.session_state.son_barkod = ""
             st.session_state.arama_modu = None
-            st.experimental_rerun()
+            rerun_app()
 
         if taranan and taranan != st.session_state.son_barkod:
             st.session_state.son_barkod = taranan
@@ -294,7 +313,7 @@ def display_main_panel():
             st.session_state.bulunan_urunler = sonuc
             urun_adi = sonuc.iloc[0]["adi"] if sonuc is not None and len(sonuc) > 0 else ""
             log_kaydet(st.session_state.current_user, taranan, urun_adi)
-            st.experimental_rerun()
+            rerun_app()
 
         if st.session_state.arama_modu == "kamera":
             st.markdown("---")
@@ -305,7 +324,7 @@ def display_main_panel():
                 if st.button("YENIDEN TARA", use_container_width=True):
                     st.session_state.son_barkod = ""
                     st.session_state.arama_modu = None
-                    st.experimental_rerun()
+                    rerun_app()
 
     with tab2:
         st.markdown("**BARKOD NUMARASI VEYA URUN ADI GIRIN:**")
@@ -355,7 +374,7 @@ def display_main_panel():
             st.session_state.pending_price_request = None
             st.session_state.price_warning = False
             st.success("TALEP ONAYLANDI VE KAYDEDILDI.")
-            st.experimental_rerun()
+            rerun_app()
         if col2.button("VAZGEÇ"):
             st.session_state.pending_price_request = None
             st.session_state.price_warning = False
@@ -394,7 +413,8 @@ def urun_goster_ve_form(urun_row):
     )
 
     if not st.session_state.talep_gonderildi:
-        with st.form("talep_formu", clear_on_submit=False):
+        form_key = f"talep_formu_{to_upper(urun_row['barkod'])}"
+        with st.form(form_key, clear_on_submit=False):
             yeni_fiyat = st.number_input(
                 "YENI FIYAT TALEBI (₺)",
                 min_value=0.01,
@@ -444,7 +464,7 @@ def urun_goster_ve_form(urun_row):
             st.session_state.talep_gonderildi = False
             st.session_state.son_barkod = ""
             st.session_state.arama_modu = None
-            st.experimental_rerun()
+            rerun_app()
 
 
 @st.cache_data(ttl=60)
