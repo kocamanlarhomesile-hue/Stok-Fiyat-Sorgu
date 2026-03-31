@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Barkod Tarayıcı</title>
+  <script src="https://unpkg.com/@zxing/library@0.19.3/umd/index.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: #000; color: #fff; }
+
+    #wrapper {
+      position: relative;
+      width: 100%;
+      max-width: 480px;
+      margin: 0 auto;
+      background: #000;
+      display: none;
+    }
+    #video { width: 100%; display: block; }
+
+    #scan-line {
+      position: absolute;
+      left: 8%; width: 84%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #ff3333, transparent);
+      box-shadow: 0 0 6px #ff3333;
+      animation: scan 2s linear infinite;
+      top: 40%;
+      pointer-events: none;
+    }
+    @keyframes scan {
+      0%   { top: 20%; }
+      50%  { top: 75%; }
+      100% { top: 20%; }
+    }
+
+    #frame-guide {
+      position: absolute;
+      left: 8%; top: 12%;
+      width: 84%; height: 76%;
+      pointer-events: none;
+    }
+    .corner {
+      position: absolute;
+      width: 28px; height: 28px;
+      border-color: rgba(255,255,255,0.9);
+      border-style: solid;
+      border-width: 0;
+    }
+    .tl { top:0; left:0;  border-top-width:3px; border-left-width:3px; }
+    .tr { top:0; right:0; border-top-width:3px; border-right-width:3px; }
+    .bl { bottom:0; left:0; border-bottom-width:3px; border-left-width:3px; }
+    .br { bottom:0; right:0; border-bottom-width:3px; border-right-width:3px; }
+
+    #status-bar {
+      background: rgba(0,0,0,0.8);
+      color: #eee;
+      text-align: center;
+      padding: 8px 12px;
+      font-size: 13px;
+      display: none;
+    }
+
+    #result-panel {
+      display: none;
+      background: #1b5e20;
+      color: #fff;
+      padding: 16px 12px;
+      text-align: center;
+    }
+    #result-panel .label { font-size: 11px; opacity: 0.8; letter-spacing:1px; }
+    #result-panel .val   { font-size: 20px; font-weight: bold; margin-top: 4px; word-break: break-all; }
+
+    #btn-row {
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      background: #111;
+    }
+    button {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    #btn-torch  { background: #333; color: #fff; display: none; }
+    #btn-rescan { background: #1565c0; color: #fff; display: none; }
+    #btn-start  { background: #2e7d32; color: #fff; flex: 1; }
+  </style>
+</head>
+<body>
+
+<div id="wrapper">
+  <video id="video" playsinline muted autoplay></video>
+  <div id="scan-line"></div>
+  <div id="frame-guide">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+  </div>
+</div>
+
+<div id="status-bar">📷 Barkodu çerçeve içine alın...</div>
+<div id="result-panel">
+  <div class="label">OKUNAN BARKOD</div>
+  <div class="val" id="barcode-val">—</div>
+</div>
+
+<div id="btn-row">
+  <button id="btn-start"  onclick="startScanner()">📷 Kamerayı Başlat</button>
+  <button id="btn-torch"  onclick="toggleTorch()">🔦 Flaş</button>
+  <button id="btn-rescan" onclick="resetAndScan()">🔄 Yeni Tara</button>
+</div>
+
+<script>
+  /* ---- Streamlit protokolü ---- */
+  function setHeight(h) {
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setFrameHeight",
+      height: h
+    }, "*");
+  }
+  function sendValue(val) {
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setComponentValue",
+      value: val,
+      dataType: "json"
+    }, "*");
+  }
+
+  /* ---- Durum ---- */
+  let codeReader  = null;
+  let videoTrack  = null;
+  let torchOn     = false;
+  let isScanning  = false;
+  let currentMode = "scanning";  // "scanning" | "result"
+
+  /* ---- Kamerayı başlat ---- */
+  function startScanner() {
+    if (isScanning) return;
+    isScanning = true;
+
+    // UI: tarama görünümü
+    document.getElementById("wrapper").style.display = "block";
+    document.getElementById("status-bar").style.display = "block";
+    document.getElementById("result-panel").style.display = "none";
+    document.getElementById("btn-start").style.display  = "none";
+    document.getElementById("btn-torch").style.display  = "block";
+    document.getElementById("btn-rescan").style.display = "none";
+    document.getElementById("status-bar").textContent   = "📷 Barkodu çerçeve içine alın...";
+
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+
+    codeReader = new ZXing.BrowserMultiFormatReader(hints, 150);
+
+    navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "environment" },
+        width:  { ideal: 1280 },
+        height: { ideal: 720 },
+        advanced: [{ focusMode: "continuous" }]
+      }
+    })
+    .then(stream => {
+      const video = document.getElementById("video");
+      video.srcObject = stream;
+      video.play();
+
+      const tracks = stream.getVideoTracks();
+      if (tracks.length > 0) {
+        videoTrack = tracks[0];
+        try { videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch(e) {}
+      }
+
+      codeReader.decodeFromStream(stream, video, (result, err) => {
+        if (result && isScanning) {
+          onDetected(result.getText());
+        }
+      });
+
+      setTimeout(() => setHeight(document.body.scrollHeight + 10), 400);
+    })
+    .catch(err => {
+      isScanning = false;
+      document.getElementById("status-bar").textContent = "⚠️ Kamera hatası: " + err.message;
+      document.getElementById("btn-start").style.display = "block";
+      document.getElementById("btn-torch").style.display = "none";
+      setHeight(document.body.scrollHeight + 10);
+    });
+  }
+
+  /* ---- Barkod algılandı ---- */
+  function onDetected(barcode) {
+    isScanning = false;
+
+    // Kamerayı durdur
+    if (codeReader) { try { codeReader.reset(); } catch(e) {} }
+    if (videoTrack) { try { videoTrack.stop(); } catch(e) {} }
+
+    // UI: sonuç görünümü
+    document.getElementById("wrapper").style.display     = "none";
+    document.getElementById("status-bar").style.display  = "none";
+    document.getElementById("result-panel").style.display = "block";
+    document.getElementById("btn-torch").style.display   = "none";
+    document.getElementById("btn-rescan").style.display  = "block";
+    document.getElementById("btn-start").style.display   = "none";
+    document.getElementById("barcode-val").textContent   = barcode;
+
+    setTimeout(() => setHeight(document.body.scrollHeight + 10), 100);
+
+    // Streamlit'e değer gönder
+    sendValue(barcode);
+  }
+
+  /* ---- Tekrar tara ---- */
+  function resetAndScan() {
+    // Sıfırlama için null gönder, sonra yeniden başlat
+    sendValue(null);
+    setTimeout(() => {
+      document.getElementById("result-panel").style.display = "none";
+      document.getElementById("btn-rescan").style.display   = "none";
+      document.getElementById("btn-start").style.display    = "block";
+      setHeight(document.body.scrollHeight + 10);
+    }, 200);
+  }
+
+  /* ---- Flaş ---- */
+  function toggleTorch() {
+    if (!videoTrack) return;
+    torchOn = !torchOn;
+    try {
+      videoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+      document.getElementById("btn-torch").textContent = torchOn ? "🔦 Kapat" : "🔦 Flaş";
+    } catch(e) {
+      document.getElementById("btn-torch").textContent = "🔦 Desteklenmiyor";
+    }
+  }
+
+  /* ---- Streamlit render eventi ---- */
+  window.addEventListener("message", e => {
+    if (!e.data || e.data.type !== "streamlit:render") return;
+
+    const args = e.data.args || {};
+    currentMode = args.mode || "scanning";
+
+    if (currentMode === "scanning" && !isScanning) {
+      // Otomatik başlat
+      startScanner();
+    } else if (currentMode === "result") {
+      // Sadece "Yeni Tara" düğmesini göster, kamerayı başlatma
+      if (isScanning) {
+        if (codeReader) { try { codeReader.reset(); } catch(e) {} }
+        if (videoTrack) { try { videoTrack.stop(); } catch(e) {} }
+        isScanning = false;
+      }
+      document.getElementById("wrapper").style.display     = "none";
+      document.getElementById("status-bar").style.display  = "none";
+      document.getElementById("btn-torch").style.display   = "none";
+      document.getElementById("btn-rescan").style.display  = "block";
+      document.getElementById("btn-start").style.display   = "none";
+      setTimeout(() => setHeight(document.body.scrollHeight + 10), 100);
+    }
+  });
+
+  /* ---- Hazır sinyali ---- */
+  window.parent.postMessage({
+    isStreamlitMessage: true,
+    type: "streamlit:componentReady",
+    apiVersion: 1
+  }, "*");
+
+  setHeight(80);
+</script>
+</body>
+</html>
