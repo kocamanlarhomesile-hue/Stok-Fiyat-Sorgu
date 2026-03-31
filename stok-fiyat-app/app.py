@@ -609,6 +609,8 @@ if "single_edit_camera_mode" not in st.session_state:
     st.session_state.single_edit_camera_mode = False
 if "single_edit_results" not in st.session_state:
     st.session_state.single_edit_results = None
+if "single_edit_camera_result" not in st.session_state:
+    st.session_state.single_edit_camera_result = None
 
 if not st.session_state.authenticated:
     show_login_screen()
@@ -873,6 +875,10 @@ def display_single_product_edit_page():
     with left_area:
         st.markdown("### ÜRÜN ARAMA")
         search_col, camera_col, action_col = st.columns([6, 1, 1])
+        if st.session_state.get("single_edit_camera_result"):
+            st.session_state.single_edit_query = st.session_state.single_edit_camera_result
+            st.session_state.single_edit_camera_result = None
+
         search_value = search_col.text_input(
             "BARKOD VEYA ÜRÜN ADI",
             value=st.session_state.get("single_edit_query", ""),
@@ -902,7 +908,7 @@ def display_single_product_edit_page():
             st.markdown("**KAMERA MODU: BARKOD TARANMASINI BEKLEYİN**")
             taranan = barcode_scanner(mode="scanning", key="single_edit_camera")
             if taranan:
-                st.session_state.single_edit_query = taranan
+                st.session_state.single_edit_camera_result = taranan
                 st.session_state.single_edit_camera_mode = False
                 st.session_state.single_edit_selected = ""
                 st.session_state.single_edit_results = pd.DataFrame()
