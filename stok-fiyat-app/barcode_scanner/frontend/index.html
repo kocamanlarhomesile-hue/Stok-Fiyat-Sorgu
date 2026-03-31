@@ -2,161 +2,259 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>Barkod Tarayıcı</title>
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://unpkg.com/@zxing/library@0.19.3/umd/index.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: sans-serif; background: #fff; }
-    #reader {
+    body { font-family: -apple-system, sans-serif; background: #000; color: #fff; }
+
+    #wrapper {
+      position: relative;
       width: 100%;
-      max-width: 400px;
+      max-width: 480px;
       margin: 0 auto;
-      border-radius: 10px;
-      overflow: hidden;
+      background: #000;
     }
-    #reader video { border-radius: 10px; }
-    #status {
+
+    #video {
+      width: 100%;
+      display: block;
+      border-radius: 0;
+    }
+
+    /* Kırmızı tarama çizgisi animasyonu */
+    #scan-line {
+      position: absolute;
+      left: 10%;
+      width: 80%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #ff3333, transparent);
+      box-shadow: 0 0 6px #ff3333;
+      animation: scan 2s linear infinite;
+      top: 40%;
+      pointer-events: none;
+    }
+    @keyframes scan {
+      0%   { top: 20%; opacity: 1; }
+      50%  { top: 75%; opacity: 1; }
+      100% { top: 20%; opacity: 1; }
+    }
+
+    /* Köşe çerçeve rehberi */
+    #frame-guide {
+      position: absolute;
+      left: 10%; top: 15%;
+      width: 80%; height: 70%;
+      pointer-events: none;
+    }
+    .corner {
+      position: absolute;
+      width: 24px; height: 24px;
+      border-color: #fff;
+      border-style: solid;
+      border-width: 0;
+    }
+    .tl { top:0; left:0;  border-top-width:3px; border-left-width:3px; }
+    .tr { top:0; right:0; border-top-width:3px; border-right-width:3px; }
+    .bl { bottom:0; left:0; border-bottom-width:3px; border-left-width:3px; }
+    .br { bottom:0; right:0; border-bottom-width:3px; border-right-width:3px; }
+
+    #status-bar {
+      background: rgba(0,0,0,0.75);
+      color: #fff;
       text-align: center;
-      padding: 8px;
-      font-size: 14px;
-      color: #555;
-      margin-top: 4px;
+      padding: 8px 12px;
+      font-size: 13px;
     }
-    #result-box {
+
+    #result-bar {
       display: none;
-      background: #e8f5e9;
-      border: 2px solid #4caf50;
-      border-radius: 8px;
+      background: #1b5e20;
+      color: #fff;
+      text-align: center;
       padding: 12px;
-      text-align: center;
-      margin-top: 8px;
-    }
-    #result-box span {
-      font-size: 18px;
+      font-size: 15px;
       font-weight: bold;
-      color: #2e7d32;
     }
-    #rescan-btn {
-      display: none;
-      margin: 8px auto 0;
-      padding: 8px 20px;
-      background: #1976d2;
-      color: white;
+
+    #btn-row {
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      background: #111;
+    }
+    button {
+      flex: 1;
+      padding: 10px;
       border: none;
       border-radius: 6px;
-      font-size: 14px;
+      font-size: 13px;
       cursor: pointer;
-      width: 100%;
-      max-width: 400px;
     }
+    #btn-torch  { background: #333; color: #fff; }
+    #btn-rescan { background: #1565c0; color: #fff; display: none; }
   </style>
 </head>
 <body>
-  <div id="reader"></div>
-  <div id="status">📷 Barkodu çerçeveye getirin...</div>
-  <div id="result-box">✅ Okundu: <span id="barcode-text"></span></div>
-  <button id="rescan-btn" onclick="startScanner()">🔄 Tekrar Tara</button>
+<div id="wrapper">
+  <video id="video" playsinline muted autoplay></video>
+  <div id="scan-line"></div>
+  <div id="frame-guide">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+  </div>
+</div>
 
-  <script>
-    let scanner = null;
-    let scanning = true;
+<div id="status-bar">📷 Barkodu çerçeve içine alın...</div>
+<div id="result-bar" id="result-bar">✅ <span id="barcode-val"></span></div>
 
-    // Streamlit component protocol
-    function setFrameHeight(h) {
-      window.parent.postMessage({
-        isStreamlitMessage: true,
-        type: "streamlit:setFrameHeight",
-        height: h
-      }, "*");
-    }
+<div id="btn-row">
+  <button id="btn-torch" onclick="toggleTorch()">🔦 Flaş</button>
+  <button id="btn-rescan" onclick="restartScanner()">🔄 Tekrar Tara</button>
+</div>
 
-    function sendBarcodeToStreamlit(value) {
-      window.parent.postMessage({
-        isStreamlitMessage: true,
-        type: "streamlit:setComponentValue",
-        value: value,
-        dataType: "json"
-      }, "*");
-    }
-
-    function onScanSuccess(decodedText) {
-      if (!scanning) return;
-      scanning = false;
-
-      document.getElementById("status").style.display = "none";
-      document.getElementById("result-box").style.display = "block";
-      document.getElementById("barcode-text").textContent = decodedText;
-      document.getElementById("rescan-btn").style.display = "block";
-
-      if (scanner) {
-        scanner.stop().catch(() => {});
-      }
-
-      sendBarcodeToStreamlit(decodedText);
-      setFrameHeight(document.body.scrollHeight + 20);
-    }
-
-    function startScanner() {
-      scanning = true;
-      document.getElementById("status").textContent = "📷 Barkodu çerçeveye getirin...";
-      document.getElementById("status").style.display = "block";
-      document.getElementById("result-box").style.display = "none";
-      document.getElementById("rescan-btn").style.display = "none";
-
-      if (scanner) {
-        scanner.clear();
-      }
-
-      scanner = new Html5Qrcode("reader");
-
-      const config = {
-        fps: 15,
-        qrbox: { width: 280, height: 120 },
-        formatsToSupport: [
-          Html5QrcodeSupportedFormats.EAN_13,
-          Html5QrcodeSupportedFormats.EAN_8,
-          Html5QrcodeSupportedFormats.UPC_A,
-          Html5QrcodeSupportedFormats.UPC_E,
-          Html5QrcodeSupportedFormats.CODE_128,
-          Html5QrcodeSupportedFormats.CODE_39,
-          Html5QrcodeSupportedFormats.QR_CODE,
-        ],
-        aspectRatio: 1.5,
-        showTorchButtonIfSupported: true,
-        videoConstraints: {
-          facingMode: { ideal: "environment" }
-        }
-      };
-
-      scanner.start(
-        { facingMode: { ideal: "environment" } },
-        config,
-        onScanSuccess,
-        () => {}
-      ).then(() => {
-        setFrameHeight(document.body.scrollHeight + 20);
-      }).catch((err) => {
-        document.getElementById("status").textContent = "⚠️ Kamera açılamadı: " + err;
-        setFrameHeight(document.body.scrollHeight + 20);
-      });
-    }
-
-    // Streamlit ready handshake
-    window.addEventListener("message", (event) => {
-      if (event.data && event.data.type === "streamlit:render") {
-        startScanner();
-      }
-    });
-
-    // Signal component ready
+<script>
+  // --- Streamlit iletişim protokolü ---
+  function setHeight(h) {
     window.parent.postMessage({
       isStreamlitMessage: true,
-      type: "streamlit:componentReady",
-      apiVersion: 1
+      type: "streamlit:setFrameHeight",
+      height: h
     }, "*");
+  }
 
-    setFrameHeight(380);
-  </script>
+  function sendValue(val) {
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setComponentValue",
+      value: val,
+      dataType: "json"
+    }, "*");
+  }
+
+  // --- Durum ---
+  let codeReader = null;
+  let torchOn = false;
+  let videoTrack = null;
+  let scanning = true;
+
+  // --- ZXing yapılandırması (EAN-13 odaklı) ---
+  function makeHints() {
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    return hints;
+  }
+
+  // --- Tarayıcıyı başlat ---
+  function startScanner() {
+    scanning = true;
+    document.getElementById("result-bar").style.display = "none";
+    document.getElementById("btn-rescan").style.display = "none";
+    document.getElementById("status-bar").textContent = "📷 Barkodu çerçeve içine alın...";
+    document.getElementById("scan-line").style.display = "block";
+
+    codeReader = new ZXing.BrowserMultiFormatReader(makeHints(), 200);
+    codeReader.timeBetweenDecodingAttempts = 150;
+
+    // Arka kamera + autofocus + yüksek çözünürlük
+    const constraints = {
+      video: {
+        facingMode: { ideal: "environment" },
+        width:  { ideal: 1280 },
+        height: { ideal: 720 },
+        focusMode: { ideal: "continuous" },
+        advanced: [{ focusMode: "continuous" }]
+      }
+    };
+
+    navigator.mediaDevices.getUserMedia(constraints)
+      .then(stream => {
+        const video = document.getElementById("video");
+        video.srcObject = stream;
+        video.play();
+
+        const tracks = stream.getVideoTracks();
+        if (tracks.length > 0) {
+          videoTrack = tracks[0];
+          // Autofocus etkinleştir
+          try {
+            videoTrack.applyConstraints({
+              advanced: [{ focusMode: "continuous" }]
+            });
+          } catch(e) {}
+        }
+
+        // ZXing ile çözümlemeyi başlat
+        codeReader.decodeFromStream(stream, video, (result, err) => {
+          if (result && scanning) {
+            scanning = false;
+            onDetected(result.getText());
+          }
+        });
+
+        setHeight(document.body.scrollHeight + 10);
+      })
+      .catch(err => {
+        document.getElementById("status-bar").textContent =
+          "⚠️ Kamera açılamadı: " + err.message;
+        setHeight(document.body.scrollHeight + 10);
+      });
+  }
+
+  function onDetected(barcode) {
+    document.getElementById("scan-line").style.display = "none";
+    document.getElementById("result-bar").style.display = "block";
+    document.getElementById("barcode-val").textContent = barcode;
+    document.getElementById("status-bar").textContent = "✅ Okundu!";
+    document.getElementById("btn-rescan").style.display = "block";
+
+    if (codeReader) codeReader.reset();
+    if (videoTrack) videoTrack.stop();
+
+    sendValue(barcode);
+    setHeight(document.body.scrollHeight + 10);
+  }
+
+  function restartScanner() {
+    if (codeReader) { try { codeReader.reset(); } catch(e) {} }
+    startScanner();
+  }
+
+  function toggleTorch() {
+    if (!videoTrack) return;
+    torchOn = !torchOn;
+    try {
+      videoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+      document.getElementById("btn-torch").textContent =
+        torchOn ? "🔦 Flaş Kapat" : "🔦 Flaş";
+    } catch(e) {
+      document.getElementById("btn-torch").textContent = "🔦 Desteklenmiyor";
+    }
+  }
+
+  // --- Streamlit handshake ---
+  window.addEventListener("message", e => {
+    if (e.data && e.data.type === "streamlit:render") startScanner();
+  });
+
+  window.parent.postMessage({
+    isStreamlitMessage: true,
+    type: "streamlit:componentReady",
+    apiVersion: 1
+  }, "*");
+
+  setHeight(420);
+</script>
 </body>
 </html>
