@@ -272,6 +272,110 @@ def load_dataframe(path: Path, encoding="utf-8-sig"):
         return pd.DataFrame()
 
 
+def load_stock_csv(path: Path):
+    if not path.exists():
+        return pd.DataFrame(columns=["barkod", "adi", "fiyat"])
+    try:
+        df = pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
+    except Exception:
+        try:
+            df = pd.read_csv(path, dtype=str, encoding="utf-8").fillna("")
+        except Exception:
+            return pd.DataFrame(columns=["barkod", "adi", "fiyat"])
+    df.columns = [c.strip().lower() for c in df.columns]
+    if not {"barkod", "adi", "fiyat"}.issubset(set(df.columns)):
+        return pd.DataFrame(columns=["barkod", "adi", "fiyat"])
+    df = df[["barkod", "adi", "fiyat"]].copy()
+    df["barkod"] = df["barkod"].astype(str).str.strip()
+    df["adi"] = df["adi"].astype(str).str.strip()
+    df["fiyat"] = pd.to_numeric(df["fiyat"].astype(str).str.replace(",", "."), errors="coerce")
+    return df
+
+
+def preprocess_uploaded_stock(uploaded_file):
+    try:
+        df = pd.read_csv(uploaded_file, dtype=str, encoding="utf-8-sig").fillna("")
+    except Exception:
+        try:
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, dtype=str, encoding="utf-8").fillna("")
+        except Exception:
+            return None, "CSV DOSYASI OKUNAMADI."
+    df.columns = [c.strip().lower() for c in df.columns]
+    missing_columns = [col for col in ["barkod", "adi", "fiyat"] if col not in df.columns]
+    if missing_columns:
+        return None, f"CSV DOSYASINDA EKSİK SÜTUNLAR: {', '.join([col.upper() for col in missing_columns])}."
+    df = df[["barkod", "adi", "fiyat"]].copy()
+    df["barkod"] = df["barkod"].astype(str).str.strip()
+    df["adi"] = df["adi"].astype(str).str.strip()
+    df["fiyat"] = pd.to_numeric(df["fiyat"].astype(str).str.replace(",", "."), errors="coerce")
+    return df, None
+
+
+def count_invalid_stock_rows(df: pd.DataFrame):
+    if df is None or df.empty:
+        return 0
+    invalid = df["fiyat"].isna() | (df["fiyat"] <= 0)
+    return int(invalid.sum())
+
+
+def analyze_stock_update(old_df: pd.DataFrame, new_df: pd.DataFrame):
+    old_df = old_df.copy()
+    new_df = new_df.copy()
+    for frame in [old_df, new_df]:
+        frame["barkod"] = frame["barkod"].astype(str).str.strip()
+    old_prices = old_df[["barkod", "adi", "fiyat"]].drop_duplicates(subset=["barkod"])
+    new_prices = new_df[["barkod", "adi", "fiyat"]].drop_duplicates(subset=["barkod"])
+    merged = old_prices.merge(new_prices, on="barkod", how="inner", suffixes=("_old", "_new"))
+    merged["fiyat_old"] = pd.to_numeric(merged["fiyat_old"], errors="coerce")
+    merged["fiyat_new"] = pd.to_numeric(merged["fiyat_new"], errors="coerce")
+    changed = merged[merged["fiyat_old"] != merged["fiyat_new"]].copy()
+    changed_count = len(changed)
+    if not changed.empty:
+        changed["pct_fark"] = 0.0
+        nonzero = changed["fiyat_old"] != 0
+        changed.loc[nonzero, "pct_fark"] = (
+            (changed.loc[nonzero, "fiyat_new"] - changed.loc[nonzero, "fiyat_old"]).abs()
+            / changed.loc[nonzero, "fiyat_old"].abs()
+            * 100
+        )
+        changed.loc[~nonzero, "pct_fark"] = 100.0
+        suspicious = changed[changed["pct_fark"] > 50.0].copy()
+    else:
+        suspicious = changed.copy()
+    suspicious = suspicious.sort_values(by="pct_fark", ascending=False)
+    suspicious = suspicious.rename(columns={
+        "adi_new": "adi",
+        "fiyat_old": "eski_fiyat",
+        "fiyat_new": "yeni_fiyat",
+        "pct_fark": "fark_yuzde",
+    })
+    added_count = int(len(new_prices[~new_prices["barkod"].isin(old_prices["barkod"])]) if not new_prices.empty else 0)
+    removed_count = int(len(old_prices[~old_prices["barkod"].isin(new_prices["barkod"])]) if not old_prices.empty else 0)
+    return {
+        "total": int(len(new_df)),
+        "changed_count": int(changed_count),
+        "suspicious_df": suspicious[["barkod", "adi", "eski_fiyat", "yeni_fiyat", "fark_yuzde"]] if not suspicious.empty else pd.DataFrame(columns=["barkod", "adi", "eski_fiyat", "yeni_fiyat", "fark_yuzde"]),
+        "added_count": added_count,
+        "removed_count": removed_count,
+    }
+
+
+def backup_stock_file(path: Path):
+    backup_path = BASE_DIR / "yedek_stok.csv"
+    if path.exists():
+        backup_path.write_bytes(path.read_bytes())
+    return backup_path
+
+
+def save_stock_csv(path: Path, df: pd.DataFrame):
+    if df is None:
+        return
+    df = df.copy()
+    df = df[["barkod", "adi", "fiyat"]]
+    df.to_csv(path, index=False, encoding="utf-8-sig")
+
+
 def urun_bul_barkod(barkod: str, df: pd.DataFrame):
     barkod = str(barkod).strip()
     if not barkod:
@@ -468,6 +572,62 @@ def display_admin_panel():
                 rerun_app()
             else:
                 st.error("PERSONEL SİLİNEMEDİ.")
+
+    st.markdown("---")
+    st.subheader("GÜVENLİ VERİ GÜNCELLEME")
+    upload_isletme = st.selectbox(
+        "GÜNCELLENECEK İŞLETME",
+        [ISLETME_OPTIONS["HOME"], ISLETME_OPTIONS["MARKET"]],
+        index=0,
+    )
+    target_stock_path = STOK_DOSYASI_HOME if upload_isletme == ISLETME_OPTIONS["HOME"] else STOK_DOSYASI_MARKET
+    st.caption("MEVCUT DOSYA GÜNCELLENMEDEN ÖNCE yedek_stok.csv OLARAK KAYDEDİLECEK.")
+    uploaded_file = st.file_uploader(
+        "YÜKLENECEK CSV DOSYASI",
+        type=["csv"],
+        help="UTF-8-SIG formatında olmalıdır.",
+        key="secure_stock_upload",
+    )
+    if uploaded_file is not None:
+        uploaded_file.seek(0)
+        new_stock_df, upload_error = preprocess_uploaded_stock(uploaded_file)
+        if upload_error:
+            st.error(upload_error)
+        else:
+            existing_stock_df = load_stock_csv(target_stock_path)
+            invalid_count = count_invalid_stock_rows(new_stock_df)
+            analysis = analyze_stock_update(existing_stock_df, new_stock_df)
+            st.markdown("**ÖN ANALİZ**")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("TOPLAM ÜRÜN", f"{analysis['total']}")
+            col2.metric("FİYAT DEĞİŞEN", f"{analysis['changed_count']}")
+            col3.metric("YENİ ÜRÜN", f"{analysis['added_count']}")
+            col4.metric("ÇIKAN ÜRÜN", f"{analysis['removed_count']}")
+            if not analysis["suspicious_df"].empty:
+                st.markdown("**ŞÜPHELİ ÜRÜNLER (%50'DEN FAZLA DEĞİŞEN)**")
+                suspicious_df = analysis["suspicious_df"].copy()
+                suspicious_df["fark_yuzde"] = suspicious_df["fark_yuzde"].apply(lambda v: f"{v:.1f}%")
+                st.dataframe(suspicious_df)
+            else:
+                st.info("ŞÜPHELİ ÜRÜN YOK.")
+            skip_invalid = True
+            if invalid_count > 0:
+                skip_invalid = st.checkbox(
+                    f"FİYATI SIFIR (0) VEYA GEÇERSİZ OLAN {invalid_count} ADET SATIR TESPİT EDİLDİ. BUNLARI ATLAYALIM MI?",
+                    value=False,
+                )
+                if not skip_invalid:
+                    st.warning("HATALI VERİLERİ ATLAMAK İÇİN SEÇENEĞİ İŞARETLEYİN.")
+            if invalid_count == 0 or skip_invalid:
+                st.warning("GÜNCELLEME SIRASINDA UYGULAMA BAKIM MODUNA GEÇECEKTİR.")
+                confirm = st.checkbox("BU İŞLEM GERİ ALINAMAZ (YEDEK HARİÇ), EMİN MİSİNİZ?")
+                if confirm and st.button("VERİLERİ GÜNCELLE"):
+                    if invalid_count > 0:
+                        new_stock_df = new_stock_df[new_stock_df["fiyat"].notna() & (new_stock_df["fiyat"] > 0)].copy()
+                    backup_stock_file(target_stock_path)
+                    save_stock_csv(target_stock_path, new_stock_df)
+                    st.success("VERİLER GÜNCELLENDİ. YEDEK yedek_stok.csv OLARAK KAYDEDİLDİ.")
+                    rerun_app()
 
     st.markdown("---")
     st.subheader("YENİ KULLANICI EKLE")
