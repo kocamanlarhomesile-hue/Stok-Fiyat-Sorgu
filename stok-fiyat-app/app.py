@@ -430,12 +430,25 @@ def backup_stock_file(path: Path):
     return backup_path
 
 
+def clear_stock_cache():
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+
+
 def save_stock_csv(path: Path, df: pd.DataFrame):
     if df is None:
         return
     df = df.copy()
     df = df[["barkod", "adi", "fiyat"]]
     df.to_csv(path, index=False, encoding="utf-8-sig")
+    clear_stock_cache()
+
+
+@st.cache_data(ttl=300)
+def load_stock_csv_cached(path_str: str):
+    return load_stock_csv(Path(path_str))
 
 
 def build_wildcard_pattern(query: str) -> str:
@@ -448,7 +461,7 @@ def build_wildcard_pattern(query: str) -> str:
 def query_stock_candidates(path: Path, query: str):
     if not str(query).strip():
         return pd.DataFrame()
-    df = load_stock_csv(path)
+    df = load_stock_csv_cached(str(path))
     if df.empty:
         return pd.DataFrame()
     query_text = str(query).strip()
@@ -957,7 +970,11 @@ def display_single_product_edit_page():
 
         results = pd.DataFrame()
         if st.session_state.single_edit_query:
-            results = query_stock_candidates(edit_stock_path, st.session_state.single_edit_query)
+            with st.spinner("Ürün aranıyor..."):
+                results = query_stock_candidates(edit_stock_path, st.session_state.single_edit_query)
+                st.session_state.single_edit_results = results
+        elif st.session_state.get("single_edit_results") is not None:
+            results = st.session_state.single_edit_results
 
         if not results.empty:
             st.markdown(f"**{len(results)} ÜRÜN BULUNDU**")
@@ -966,9 +983,10 @@ def display_single_product_edit_page():
                 cols[0].write(to_upper(row["barkod"]))
                 cols[1].write(to_upper(row["adi"]))
                 cols[2].write(f"{float(row['fiyat']):.2f} TL")
-                if cols[3].button("DÜZENLE", key=f"edit_single_{idx}"):
+                if cols[3].button("DÜZENLE", key=f"edit_single_{idx}_{row['barkod']}"):
                     st.session_state.single_edit_selected = row["barkod"]
                     st.session_state.single_edit_choice = idx
+                    st.success("DÜZENLEME PANELİ AÇILIYOR...")
                     rerun_app()
         elif st.session_state.single_edit_query:
             st.error(f"{st.session_state.single_edit_query} İÇİN ÜRÜN BULUNAMADI.")
