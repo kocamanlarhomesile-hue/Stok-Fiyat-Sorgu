@@ -1,11 +1,11 @@
 [server]
-headless = true
 address = "0.0.0.0"
 port = 8501
-
-[client]
-showErrorDetails = true
-toolbarMode = "viewer"
+headless = true
+enableCORS = true
 
 [logger]
 level = "info"
+
+[client]
+showErrorDetails = true
