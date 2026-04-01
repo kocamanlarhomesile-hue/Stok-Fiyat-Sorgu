@@ -146,20 +146,50 @@
   }
 
   /* ---- Durum ---- */
-  const supportedFormats = [
-    Html5QrcodeSupportedFormats.EAN_13,
-    Html5QrcodeSupportedFormats.EAN_8,
-    Html5QrcodeSupportedFormats.UPC_A,
-    Html5QrcodeSupportedFormats.UPC_E,
-    Html5QrcodeSupportedFormats.CODE_128,
-    Html5QrcodeSupportedFormats.CODE_39,
-  ];
   let html5QrCode = null;
   let torchOn = false;
   let isScanning = false;
   let isStarting = false;
   let currentMode = "scanning";
   let decodeMissCount = 0;
+
+  function getSupportedFormats() {
+    if (typeof Html5QrcodeSupportedFormats === "undefined") {
+      return [];
+    }
+
+    return [
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39,
+    ];
+  }
+
+  function describeError(error) {
+    if (!error) {
+      return "Bilinmeyen hata";
+    }
+    if (typeof error === "string") {
+      return error;
+    }
+    if (error.message) {
+      return error.message;
+    }
+    try {
+      return JSON.stringify(error);
+    } catch (jsonError) {
+      return String(error);
+    }
+  }
+
+  function ensureScannerLibrary() {
+    if (typeof Html5Qrcode === "undefined") {
+      throw new Error("Kamera tarayıcı kütüphanesi yüklenemedi. Sayfayı yenileyip tekrar deneyin.");
+    }
+  }
 
   function updateStatus(message) {
     document.getElementById("status-bar").textContent = message;
@@ -200,6 +230,48 @@
       return label.includes("back") || label.includes("rear") || label.includes("environment");
     });
     return preferredCamera || cameras[0];
+  }
+
+  async function startWithFallbacks(config, preferredCamera) {
+    const cameraOptions = [];
+
+    if (preferredCamera && preferredCamera.id) {
+      cameraOptions.push({ deviceId: { exact: preferredCamera.id } });
+    }
+
+    cameraOptions.push({ facingMode: { ideal: "environment" } });
+    cameraOptions.push({ facingMode: "environment" });
+
+    let lastError = null;
+    for (const option of cameraOptions) {
+      try {
+        await html5QrCode.start(
+          option,
+          config,
+          (decodedText) => {
+            const barcode = (decodedText || "").trim();
+            if (!barcode || !isScanning) {
+              return;
+            }
+            onDetected(barcode);
+          },
+          () => {
+            if (!isScanning) {
+              return;
+            }
+            decodeMissCount += 1;
+            if (decodeMissCount % 25 === 0) {
+              updateStatus("Yıpranmış barkodlarda telefonu sabitleyin, biraz yaklaşın veya açıyı değiştirin.");
+            }
+          }
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error("Kamera başlatılamadı.");
   }
 
   function scanBoxSize(viewWidth, viewHeight) {
@@ -260,6 +332,7 @@
     updateStatus("📷 Barkodu çerçeve içine alın. Yıpranmış barkodlarda kamerayı yaklaştırın.");
 
     try {
+      ensureScannerLibrary();
       await stopScanner();
 
       if (!html5QrCode) {
@@ -268,16 +341,13 @@
 
       const cameras = await Html5Qrcode.getCameras();
       const preferredCamera = pickCamera(cameras);
-      const cameraConfig = preferredCamera
-        ? { deviceId: { exact: preferredCamera.id } }
-        : { facingMode: { ideal: "environment" } };
 
       const config = {
         fps: 8,
         qrbox: scanBoxSize,
         aspectRatio: 1,
         disableFlip: false,
-        formatsToSupport: supportedFormats,
+        formatsToSupport: getSupportedFormats(),
         experimentalFeatures: {
           useBarCodeDetectorIfSupported: true,
         },
@@ -293,35 +363,15 @@
         },
       };
 
-      await html5QrCode.start(
-        cameraConfig,
-        config,
-        (decodedText) => {
-          const barcode = (decodedText || "").trim();
-          if (!barcode || !isScanning) {
-            return;
-          }
-          onDetected(barcode);
-        },
-        () => {
-          if (!isScanning) {
-            return;
-          }
-          decodeMissCount += 1;
-          if (decodeMissCount % 25 === 0) {
-            updateStatus("Yıpranmış barkodlarda telefonu sabitleyin, biraz yaklaşın veya açıyı değiştirin.");
-          }
-        }
-      );
-
       isScanning = true;
+      await startWithFallbacks(config, preferredCamera);
       isStarting = false;
       updateTorchVisibility();
       setTimeout(() => setHeight(document.body.scrollHeight + 10), 400);
     } catch (error) {
       await stopScanner();
       setIdleLayout();
-      updateStatus("⚠️ Kamera hatası: " + error.message);
+      updateStatus("⚠️ Kamera hatası: " + describeError(error));
       setHeight(document.body.scrollHeight + 10);
     }
   }
