@@ -955,10 +955,18 @@ def display_main_panel():
             st.markdown("---")
             if st.session_state.bulunan_urunler is not None:
                 goster_sonuc(st.session_state.bulunan_urunler, "kamera")
+                if st.button("TEKRAR DENE", use_container_width=True):
+                    st.session_state.son_barkod = ""
+                    st.session_state.bulunan_urunler = None
+                    st.session_state.talep_gonderildi = False
+                    st.session_state.arama_modu = None
+                    rerun_app()
             else:
                 st.warning(f"{st.session_state.son_barkod} BARKODLU URUN LISTEDE YOK.")
-                if st.button("YENIDEN TARA", use_container_width=True):
+                if st.button("TEKRAR DENE", use_container_width=True):
                     st.session_state.son_barkod = ""
+                    st.session_state.bulunan_urunler = None
+                    st.session_state.talep_gonderildi = False
                     st.session_state.arama_modu = None
                     rerun_app()
 

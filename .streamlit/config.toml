@@ -3,6 +3,7 @@ address = "0.0.0.0"
 port = 8501
 headless = true
 enableCORS = true
+enableXsrfProtection = true
 
 [logger]
 level = "info"

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>Barkod Tarayıcı</title>
-  <script src="https://unpkg.com/@zxing/library@0.19.3/umd/index.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, sans-serif; background: #000; color: #fff; }
@@ -17,7 +17,17 @@
       background: #000;
       display: none;
     }
-    #video { width: 100%; display: block; }
+    #reader {
+      width: 100%;
+      min-height: 320px;
+    }
+    #reader video,
+    #reader canvas {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover;
+      display: block;
+    }
 
     #scan-line {
       position: absolute;
@@ -95,7 +105,7 @@
 <body>
 
 <div id="wrapper">
-  <video id="video" playsinline muted autoplay></video>
+  <div id="reader"></div>
   <div id="scan-line"></div>
   <div id="frame-guide">
     <div class="corner tl"></div>
@@ -114,7 +124,7 @@
 <div id="btn-row">
   <button id="btn-start"  onclick="startScanner()">📷 Kamerayı Başlat</button>
   <button id="btn-torch"  onclick="toggleTorch()">🔦 Flaş</button>
-  <button id="btn-rescan" onclick="resetAndScan()">🔄 Yeni Tara</button>
+  <button id="btn-rescan" onclick="resetAndScan()">🔄 Tekrar Dene</button>
 </div>
 
 <script>
@@ -136,118 +146,219 @@
   }
 
   /* ---- Durum ---- */
-  let codeReader  = null;
-  let videoTrack  = null;
-  let torchOn     = false;
-  let isScanning  = false;
-  let currentMode = "scanning";  // "scanning" | "result"
+  const supportedFormats = [
+    Html5QrcodeSupportedFormats.EAN_13,
+    Html5QrcodeSupportedFormats.EAN_8,
+    Html5QrcodeSupportedFormats.UPC_A,
+    Html5QrcodeSupportedFormats.UPC_E,
+    Html5QrcodeSupportedFormats.CODE_128,
+    Html5QrcodeSupportedFormats.CODE_39,
+  ];
+  let html5QrCode = null;
+  let torchOn = false;
+  let isScanning = false;
+  let isStarting = false;
+  let currentMode = "scanning";
+  let decodeMissCount = 0;
 
-  /* ---- Kamerayı başlat ---- */
-  function startScanner() {
-    if (isScanning) return;
-    isScanning = true;
+  function updateStatus(message) {
+    document.getElementById("status-bar").textContent = message;
+  }
 
-    // UI: tarama görünümü
+  function setScanningLayout() {
     document.getElementById("wrapper").style.display = "block";
     document.getElementById("status-bar").style.display = "block";
     document.getElementById("result-panel").style.display = "none";
-    document.getElementById("btn-start").style.display  = "none";
-    document.getElementById("btn-torch").style.display  = "block";
+    document.getElementById("btn-start").style.display = "none";
+    document.getElementById("btn-rescan").style.display = "block";
+  }
+
+  function setIdleLayout() {
+    document.getElementById("wrapper").style.display = "none";
+    document.getElementById("status-bar").style.display = "block";
+    document.getElementById("btn-start").style.display = "block";
+    document.getElementById("btn-torch").style.display = "none";
     document.getElementById("btn-rescan").style.display = "none";
-    document.getElementById("status-bar").textContent   = "📷 Barkodu çerçeve içine alın...";
+  }
 
-    const hints = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      ZXing.BarcodeFormat.EAN_13,
-      ZXing.BarcodeFormat.EAN_8,
-      ZXing.BarcodeFormat.UPC_A,
-      ZXing.BarcodeFormat.UPC_E,
-      ZXing.BarcodeFormat.CODE_128,
-      ZXing.BarcodeFormat.CODE_39,
-    ]);
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  function setResultLayout(barcode) {
+    document.getElementById("wrapper").style.display = "none";
+    document.getElementById("status-bar").style.display = "none";
+    document.getElementById("result-panel").style.display = "block";
+    document.getElementById("btn-start").style.display = "none";
+    document.getElementById("btn-torch").style.display = "none";
+    document.getElementById("btn-rescan").style.display = "block";
+    document.getElementById("barcode-val").textContent = barcode || "—";
+  }
 
-    codeReader = new ZXing.BrowserMultiFormatReader(hints, 150);
-
-    navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: "environment" },
-        width:  { ideal: 1280 },
-        height: { ideal: 720 },
-        advanced: [{ focusMode: "continuous" }]
-      }
-    })
-    .then(stream => {
-      const video = document.getElementById("video");
-      video.srcObject = stream;
-      video.play();
-
-      const tracks = stream.getVideoTracks();
-      if (tracks.length > 0) {
-        videoTrack = tracks[0];
-        try { videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch(e) {}
-      }
-
-      codeReader.decodeFromStream(stream, video, (result, err) => {
-        if (result && isScanning) {
-          onDetected(result.getText());
-        }
-      });
-
-      setTimeout(() => setHeight(document.body.scrollHeight + 10), 400);
-    })
-    .catch(err => {
-      isScanning = false;
-      document.getElementById("status-bar").textContent = "⚠️ Kamera hatası: " + err.message;
-      document.getElementById("btn-start").style.display = "block";
-      document.getElementById("btn-torch").style.display = "none";
-      setHeight(document.body.scrollHeight + 10);
+  function pickCamera(cameras) {
+    if (!cameras || cameras.length === 0) {
+      return null;
+    }
+    const preferredCamera = cameras.find((camera) => {
+      const label = (camera.label || "").toLowerCase();
+      return label.includes("back") || label.includes("rear") || label.includes("environment");
     });
+    return preferredCamera || cameras[0];
+  }
+
+  function scanBoxSize(viewWidth, viewHeight) {
+    return {
+      width: Math.floor(viewWidth * 0.92),
+      height: Math.max(110, Math.floor(viewHeight * 0.38)),
+    };
+  }
+
+  async function stopScanner() {
+    if (!html5QrCode) {
+      isScanning = false;
+      isStarting = false;
+      return;
+    }
+
+    try {
+      if (html5QrCode.isScanning) {
+        await html5QrCode.stop();
+      }
+    } catch (error) {
+      console.debug("Scanner stop warning:", error);
+    }
+
+    try {
+      await html5QrCode.clear();
+    } catch (error) {
+      console.debug("Scanner clear warning:", error);
+    }
+
+    isScanning = false;
+    isStarting = false;
+    torchOn = false;
+  }
+
+  function updateTorchVisibility() {
+    if (!html5QrCode || !html5QrCode.isScanning) {
+      document.getElementById("btn-torch").style.display = "none";
+      return;
+    }
+
+    const capabilities = html5QrCode.getRunningTrackCapabilities ? html5QrCode.getRunningTrackCapabilities() : null;
+    const hasTorch = capabilities && capabilities.torch;
+    document.getElementById("btn-torch").style.display = hasTorch ? "block" : "none";
+    document.getElementById("btn-torch").textContent = torchOn ? "🔦 Kapat" : "🔦 Flaş";
+  }
+
+  /* ---- Kamerayı başlat ---- */
+  async function startScanner(forceRestart = false) {
+    if (isStarting || (isScanning && !forceRestart)) {
+      return;
+    }
+
+    isStarting = true;
+    decodeMissCount = 0;
+    torchOn = false;
+    setScanningLayout();
+    updateStatus("📷 Barkodu çerçeve içine alın. Yıpranmış barkodlarda kamerayı yaklaştırın.");
+
+    try {
+      await stopScanner();
+
+      if (!html5QrCode) {
+        html5QrCode = new Html5Qrcode("reader", { verbose: false });
+      }
+
+      const cameras = await Html5Qrcode.getCameras();
+      const preferredCamera = pickCamera(cameras);
+      const cameraConfig = preferredCamera
+        ? { deviceId: { exact: preferredCamera.id } }
+        : { facingMode: { ideal: "environment" } };
+
+      const config = {
+        fps: 8,
+        qrbox: scanBoxSize,
+        aspectRatio: 1,
+        disableFlip: false,
+        formatsToSupport: supportedFormats,
+        experimentalFeatures: {
+          useBarCodeDetectorIfSupported: true,
+        },
+        videoConstraints: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          facingMode: { ideal: "environment" },
+          advanced: [
+            { focusMode: "continuous" },
+            { exposureMode: "continuous" },
+            { whiteBalanceMode: "continuous" },
+          ],
+        },
+      };
+
+      await html5QrCode.start(
+        cameraConfig,
+        config,
+        (decodedText) => {
+          const barcode = (decodedText || "").trim();
+          if (!barcode || !isScanning) {
+            return;
+          }
+          onDetected(barcode);
+        },
+        () => {
+          if (!isScanning) {
+            return;
+          }
+          decodeMissCount += 1;
+          if (decodeMissCount % 25 === 0) {
+            updateStatus("Yıpranmış barkodlarda telefonu sabitleyin, biraz yaklaşın veya açıyı değiştirin.");
+          }
+        }
+      );
+
+      isScanning = true;
+      isStarting = false;
+      updateTorchVisibility();
+      setTimeout(() => setHeight(document.body.scrollHeight + 10), 400);
+    } catch (error) {
+      await stopScanner();
+      setIdleLayout();
+      updateStatus("⚠️ Kamera hatası: " + error.message);
+      setHeight(document.body.scrollHeight + 10);
+    }
   }
 
   /* ---- Barkod algılandı ---- */
-  function onDetected(barcode) {
-    isScanning = false;
-
-    // Kamerayı durdur
-    if (codeReader) { try { codeReader.reset(); } catch(e) {} }
-    if (videoTrack) { try { videoTrack.stop(); } catch(e) {} }
-
-    // UI: sonuç görünümü
-    document.getElementById("wrapper").style.display     = "none";
-    document.getElementById("status-bar").style.display  = "none";
-    document.getElementById("result-panel").style.display = "block";
-    document.getElementById("btn-torch").style.display   = "none";
-    document.getElementById("btn-rescan").style.display  = "block";
-    document.getElementById("btn-start").style.display   = "none";
-    document.getElementById("barcode-val").textContent   = barcode;
-
+  async function onDetected(barcode) {
+    await stopScanner();
+    setResultLayout(barcode);
     setTimeout(() => setHeight(document.body.scrollHeight + 10), 100);
-
-    // Streamlit'e değer gönder
     sendValue(barcode);
   }
 
   /* ---- Tekrar tara ---- */
-  function resetAndScan() {
-    // Sıfırlama için null gönder, sonra yeniden başlat
+  async function resetAndScan() {
     sendValue(null);
-    setTimeout(() => {
-      document.getElementById("result-panel").style.display = "none";
-      document.getElementById("btn-rescan").style.display   = "none";
-      document.getElementById("btn-start").style.display    = "block";
-      setHeight(document.body.scrollHeight + 10);
-    }, 200);
+    document.getElementById("result-panel").style.display = "none";
+    await startScanner(true);
   }
 
   /* ---- Flaş ---- */
-  function toggleTorch() {
-    if (!videoTrack) return;
-    torchOn = !torchOn;
+  async function toggleTorch() {
+    if (!html5QrCode || !html5QrCode.isScanning) {
+      return;
+    }
+
+    const capabilities = html5QrCode.getRunningTrackCapabilities ? html5QrCode.getRunningTrackCapabilities() : null;
+    if (!capabilities || !capabilities.torch) {
+      document.getElementById("btn-torch").textContent = "🔦 Desteklenmiyor";
+      return;
+    }
+
     try {
-      videoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+      torchOn = !torchOn;
+      await html5QrCode.applyVideoConstraints({ advanced: [{ torch: torchOn }] });
       document.getElementById("btn-torch").textContent = torchOn ? "🔦 Kapat" : "🔦 Flaş";
-    } catch(e) {
+    } catch (error) {
+      torchOn = false;
       document.getElementById("btn-torch").textContent = "🔦 Desteklenmiyor";
     }
   }
@@ -260,21 +371,17 @@
     currentMode = args.mode || "scanning";
 
     if (currentMode === "scanning" && !isScanning) {
-      // Otomatik başlat
       startScanner();
     } else if (currentMode === "result") {
-      // Sadece "Yeni Tara" düğmesini göster, kamerayı başlatma
-      if (isScanning) {
-        if (codeReader) { try { codeReader.reset(); } catch(e) {} }
-        if (videoTrack) { try { videoTrack.stop(); } catch(e) {} }
-        isScanning = false;
-      }
-      document.getElementById("wrapper").style.display     = "none";
-      document.getElementById("status-bar").style.display  = "none";
-      document.getElementById("btn-torch").style.display   = "none";
-      document.getElementById("btn-rescan").style.display  = "block";
-      document.getElementById("btn-start").style.display   = "none";
-      setTimeout(() => setHeight(document.body.scrollHeight + 10), 100);
+      stopScanner().then(() => {
+        document.getElementById("wrapper").style.display = "none";
+        document.getElementById("status-bar").style.display = "none";
+        document.getElementById("result-panel").style.display = "none";
+        document.getElementById("btn-torch").style.display = "none";
+        document.getElementById("btn-rescan").style.display = "block";
+        document.getElementById("btn-start").style.display = "none";
+        setTimeout(() => setHeight(document.body.scrollHeight + 10), 100);
+      });
     }
   });
 
