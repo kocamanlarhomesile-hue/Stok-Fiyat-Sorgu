@@ -603,14 +603,6 @@ if "single_edit_query" not in st.session_state:
     st.session_state.single_edit_query = ""
 if "single_edit_selected" not in st.session_state:
     st.session_state.single_edit_selected = ""
-if "single_edit_choice" not in st.session_state:
-    st.session_state.single_edit_choice = 0
-if "single_edit_camera_mode" not in st.session_state:
-    st.session_state.single_edit_camera_mode = False
-if "single_edit_results" not in st.session_state:
-    st.session_state.single_edit_results = None
-if "single_edit_camera_result" not in st.session_state:
-    st.session_state.single_edit_camera_result = None
 
 if not st.session_state.authenticated:
     show_login_screen()
@@ -860,7 +852,7 @@ def display_admin_panel():
 
 def display_single_product_edit_page():
     st.markdown("## TEK ÜRÜN DÜZENLE")
-    st.caption("ARAMA, LİSTELEME VE DÜZENLEME PANELİ")
+    st.caption("Ürün arama ve düzenleme paneli")
     st.markdown("---")
 
     edit_isletme_choice = st.selectbox(
@@ -871,109 +863,62 @@ def display_single_product_edit_page():
     )
     edit_stock_path = STOK_DOSYASI_HOME if edit_isletme_choice == ISLETME_OPTIONS["HOME"] else STOK_DOSYASI_MARKET
 
-    left_area, right_area = st.columns([4, 1])
-    with left_area:
-        st.markdown("### ÜRÜN ARAMA")
-        search_col, camera_col, action_col = st.columns([6, 1, 1])
-        if st.session_state.get("single_edit_camera_result"):
-            st.session_state.single_edit_query = st.session_state.single_edit_camera_result
-            st.session_state.single_edit_camera_result = None
+    st.markdown("### ARAMA")
+    col1, col2 = st.columns([5, 1])
+    col1.text_input(
+        "BARKOD VEYA ÜRÜN ADI",
+        value=st.session_state.get("single_edit_query", ""),
+        placeholder="ÖRN: *EKMEK* veya 12345",
+        key="single_edit_query",
+    )
+    search_clicked = col2.button("ÜRÜNÜ BUL")
 
-        search_value = search_col.text_input(
-            "BARKOD VEYA ÜRÜN ADI",
-            value=st.session_state.get("single_edit_query", ""),
-            placeholder="ÖRN: *EKMEK* veya 12345",
-            key="single_edit_query",
-        )
-        camera_clicked = camera_col.button("BARKOD TARA")
-        search_clicked = action_col.button("ÜRÜNÜ BUL")
-
-        if camera_clicked:
-            st.session_state.single_edit_camera_mode = True
+    if search_clicked:
+        if not st.session_state.single_edit_query.strip():
+            st.warning("LÜTFEN ARAMA KELİMESİ GİRİN.")
             st.session_state.single_edit_selected = ""
-            st.session_state.single_edit_results = None
-            rerun_app()
-
-        if search_clicked:
-            if st.session_state.single_edit_query.strip():
-                st.session_state.single_edit_camera_mode = False
-                st.session_state.single_edit_selected = ""
-                st.session_state.single_edit_results = pd.DataFrame()
-                rerun_app()
-            else:
-                st.warning("LÜTFEN ARAMA KELİMESİ GİRİN.")
-
-        if st.session_state.single_edit_camera_mode:
-            from barcode_scanner import barcode_scanner
-            st.markdown("**KAMERA MODU: BARKOD TARANMASINI BEKLEYİN**")
-            taranan = barcode_scanner(mode="scanning", key="single_edit_camera")
-            if taranan:
-                st.session_state.single_edit_camera_result = taranan
-                st.session_state.single_edit_camera_mode = False
-                st.session_state.single_edit_selected = ""
-                st.session_state.single_edit_results = pd.DataFrame()
-                rerun_app()
-
-        if not st.session_state.single_edit_query and not st.session_state.single_edit_camera_mode:
-            st.info("ARAMAK İÇİN BARKOD, ÜRÜN ADI VEYA JOKER (*) KULLANARAK ARAMA YAPIN.")
-
-        results = pd.DataFrame()
-        if st.session_state.single_edit_query:
+        else:
             with st.spinner("Ürün aranıyor..."):
                 results = query_stock_candidates(edit_stock_path, st.session_state.single_edit_query)
-            st.session_state.single_edit_results = results
-        elif st.session_state.get("single_edit_results") is not None:
-            results = st.session_state.single_edit_results
-
-        if not results.empty:
-            st.markdown(f"**{len(results)} ÜRÜN BULUNDU**")
-            for idx, row in results.reset_index(drop=True).iterrows():
-                cols = st.columns([2, 6, 2, 1])
-                cols[0].write(to_upper(row["barkod"]))
-                cols[1].write(to_upper(row["adi"]))
-                cols[2].write(f"{float(row['fiyat']):.2f} TL")
-                if cols[3].button("DÜZENLE", key=f"edit_single_{idx}_{row['barkod']}"):
-                    st.session_state.single_edit_selected = row["barkod"]
-                    st.session_state.single_edit_choice = idx
-                    st.success("DÜZENLEME PANELİ AÇILIYOR...")
-                    rerun_app()
-        elif st.session_state.single_edit_query:
-            st.error(f"{st.session_state.single_edit_query} İÇİN ÜRÜN BULUNAMADI.")
-
-    with right_area:
-        with st.expander("DÜZENLEME PANELİ", expanded=True):
-            if st.session_state.single_edit_selected:
-                product = load_stock_csv(edit_stock_path)
-                product = product[product["barkod"].astype(str).str.strip() == st.session_state.single_edit_selected]
-                if not product.empty:
-                    product = product.iloc[0]
-                    st.markdown(f"**SEÇİLEN ÜRÜN:** {to_upper(product['adi'])}")
-                    st.markdown(f"BARKOD: {to_upper(product['barkod'])}")
-                    with st.form("single_edit_right_form", clear_on_submit=False):
-                        yeni_adi = st.text_input("YENİ ÜRÜN ADI", value=to_upper(product["adi"]))
-                        yeni_fiyat = st.number_input(
-                            "YENİ FİYAT (TL)",
-                            min_value=0.01,
-                            value=float(product["fiyat"]) if product["fiyat"] not in [None, ""] else 0.01,
-                            step=0.25,
-                            format="%.2f",
-                        )
-                        submit_update = st.form_submit_button("CSV'Yİ GÜNCELLE")
-                        if submit_update:
-                            if update_single_stock_product(edit_stock_path, product["barkod"], yeni_adi, yeni_fiyat):
-                                st.success("ÜRÜN GÜNCELLENDİ.")
-                                st.warning("BU GÜNCELLEME GITHUB'DA KALICI DEĞİLDİR, LÜTFEN DOSYAYI İNDİRİP MANUEL YÜKLEYİN.")
-                                st.session_state.single_edit_query = ""
-                                st.session_state.single_edit_selected = ""
-                                st.session_state.single_edit_results = pd.DataFrame()
-                                st.session_state.single_edit_choice = 0
-                                rerun_app()
-                            else:
-                                st.error("ÜRÜN GÜNCELLENEMEDİ. LÜTFEN DOĞRU ÜRÜNÜ SEÇİN.")
-                else:
-                    st.warning("SEÇİLEN BARKODA AİT ÜRÜN BULUNAMADI.")
+            if results.empty:
+                st.error(f'"{st.session_state.single_edit_query}" için ürün bulunamadı.')
+                st.session_state.single_edit_selected = ""
             else:
-                st.info("LÜTFEN SOLDAKİ SONUÇLARDAN BİR ÜRÜN SEÇİN VEYA YENİDEN ARA.")
+                if len(results) > 1:
+                    st.warning(f"{len(results)} ürün bulundu. İlk bulunan ürün düzenleniyor.")
+                st.session_state.single_edit_selected = results.iloc[0]["barkod"]
+
+    if st.session_state.single_edit_selected:
+        product = load_stock_csv(edit_stock_path)
+        product = product[product["barkod"].astype(str).str.strip() == st.session_state.single_edit_selected]
+        if not product.empty:
+            product = product.iloc[0]
+            st.markdown("### SEÇİLEN ÜRÜN")
+            st.markdown(f"**{to_upper(product['adi'])}**")
+            st.markdown(f"BARKOD: {to_upper(product['barkod'])}")
+            with st.form("single_edit_right_form", clear_on_submit=False):
+                yeni_adi = st.text_input("YENİ ÜRÜN ADI", value=to_upper(product["adi"]))
+                yeni_fiyat = st.number_input(
+                    "YENİ FİYAT (TL)",
+                    min_value=0.01,
+                    value=float(product["fiyat"]) if product["fiyat"] not in [None, ""] else 0.01,
+                    step=0.25,
+                    format="%.2f",
+                )
+                submit_update = st.form_submit_button("CSV'Yİ GÜNCELLE")
+                if submit_update:
+                    if update_single_stock_product(edit_stock_path, product["barkod"], yeni_adi, yeni_fiyat):
+                        st.success("ÜRÜN GÜNCELLENDİ.")
+                        st.warning("BU GÜNCELLEME GITHUB'DA KALICI DEĞİLDİR, LÜTFEN DOSYAYI İNDİRİP MANUEL YÜKLEYİN.")
+                        st.session_state.single_edit_query = ""
+                        st.session_state.single_edit_selected = ""
+                        rerun_app()
+                    else:
+                        st.error("ÜRÜN GÜNCELLENEMEDİ. LÜTFEN DOĞRU ÜRÜNÜ SEÇİN.")
+        else:
+            st.warning("Seçilen ürün stokta bulunamadı. Lütfen yeniden arayın.")
+    else:
+        st.info("BARKOD VEYA ÜRÜN ADI GİRİN, ARAMA BUTONUNA BASIN.")
 
 
 def display_main_panel():
