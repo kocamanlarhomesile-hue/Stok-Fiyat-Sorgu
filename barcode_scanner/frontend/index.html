@@ -282,8 +282,8 @@
 
   function scanBoxSize(viewWidth, viewHeight) {
     return {
-      width: Math.floor(viewWidth * 0.92),
-      height: Math.max(110, Math.floor(viewHeight * 0.38)),
+      width: Math.floor(viewWidth * 0.96),
+      height: Math.max(80, Math.floor(viewHeight * 0.18)),
     };
   }
 
@@ -342,7 +342,7 @@
       decodeMissCount = 0;
       torchOn = false;
       setScanningLayout();
-      updateStatus("📷 Barkodu çerçeve içine alın. Yıpranmış barkodlarda kamerayı yaklaştırın.");
+      updateStatus("📷 Barkodu kırmızı çizginin ortasına yatay yerleştirin. Uzaklığı yavaşça değiştirin.");
 
       try {
         ensureScannerLibrary();
@@ -356,18 +356,19 @@
         const preferredCamera = pickCamera(cameras);
 
         const config = {
-          fps: 8,
+          fps: 12,
           qrbox: scanBoxSize,
-          aspectRatio: 1,
+          aspectRatio: 1.7777778,
           disableFlip: false,
           formatsToSupport: getSupportedFormats(),
           experimentalFeatures: {
-            useBarCodeDetectorIfSupported: true,
+            useBarCodeDetectorIfSupported: false,
           },
           videoConstraints: {
             width: { ideal: 1920 },
             height: { ideal: 1080 },
             facingMode: { ideal: "environment" },
+              updateStatus("📷 Barkodu kırmızı çizginin ortasına yatay yerleştirin. Uzaklığı yavaşça değiştirin.");
             advanced: [
               { focusMode: "continuous" },
               { exposureMode: "continuous" },
