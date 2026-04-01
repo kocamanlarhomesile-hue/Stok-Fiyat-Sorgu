@@ -152,6 +152,12 @@
   let isStarting = false;
   let currentMode = "scanning";
   let decodeMissCount = 0;
+  let transitionChain = Promise.resolve();
+
+  function withTransition(task) {
+    transitionChain = transitionChain.then(task, task);
+    return transitionChain;
+  }
 
   function getSupportedFormats() {
     if (typeof Html5QrcodeSupportedFormats === "undefined") {
@@ -281,7 +287,7 @@
     };
   }
 
-  async function stopScanner() {
+  async function stopScannerInternal() {
     if (!html5QrCode) {
       isScanning = false;
       isStarting = false;
@@ -307,6 +313,12 @@
     torchOn = false;
   }
 
+  async function stopScanner() {
+    return withTransition(async () => {
+      await stopScannerInternal();
+    });
+  }
+
   function updateTorchVisibility() {
     if (!html5QrCode || !html5QrCode.isScanning) {
       document.getElementById("btn-torch").style.display = "none";
@@ -321,67 +333,72 @@
 
   /* ---- Kamerayı başlat ---- */
   async function startScanner(forceRestart = false) {
-    if (isStarting || (isScanning && !forceRestart)) {
-      return;
-    }
-
-    isStarting = true;
-    decodeMissCount = 0;
-    torchOn = false;
-    setScanningLayout();
-    updateStatus("📷 Barkodu çerçeve içine alın. Yıpranmış barkodlarda kamerayı yaklaştırın.");
-
-    try {
-      ensureScannerLibrary();
-      await stopScanner();
-
-      if (!html5QrCode) {
-        html5QrCode = new Html5Qrcode("reader", { verbose: false });
+    return withTransition(async () => {
+      if (isStarting || (isScanning && !forceRestart)) {
+        return;
       }
 
-      const cameras = await Html5Qrcode.getCameras();
-      const preferredCamera = pickCamera(cameras);
+      isStarting = true;
+      decodeMissCount = 0;
+      torchOn = false;
+      setScanningLayout();
+      updateStatus("📷 Barkodu çerçeve içine alın. Yıpranmış barkodlarda kamerayı yaklaştırın.");
 
-      const config = {
-        fps: 8,
-        qrbox: scanBoxSize,
-        aspectRatio: 1,
-        disableFlip: false,
-        formatsToSupport: getSupportedFormats(),
-        experimentalFeatures: {
-          useBarCodeDetectorIfSupported: true,
-        },
-        videoConstraints: {
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          facingMode: { ideal: "environment" },
-          advanced: [
-            { focusMode: "continuous" },
-            { exposureMode: "continuous" },
-            { whiteBalanceMode: "continuous" },
-          ],
-        },
-      };
+      try {
+        ensureScannerLibrary();
+        await stopScannerInternal();
 
-      isScanning = true;
-      await startWithFallbacks(config, preferredCamera);
-      isStarting = false;
-      updateTorchVisibility();
-      setTimeout(() => setHeight(document.body.scrollHeight + 10), 400);
-    } catch (error) {
-      await stopScanner();
-      setIdleLayout();
-      updateStatus("⚠️ Kamera hatası: " + describeError(error));
-      setHeight(document.body.scrollHeight + 10);
-    }
+        if (!html5QrCode) {
+          html5QrCode = new Html5Qrcode("reader", { verbose: false });
+        }
+
+        const cameras = await Html5Qrcode.getCameras();
+        const preferredCamera = pickCamera(cameras);
+
+        const config = {
+          fps: 8,
+          qrbox: scanBoxSize,
+          aspectRatio: 1,
+          disableFlip: false,
+          formatsToSupport: getSupportedFormats(),
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true,
+          },
+          videoConstraints: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            facingMode: { ideal: "environment" },
+            advanced: [
+              { focusMode: "continuous" },
+              { exposureMode: "continuous" },
+              { whiteBalanceMode: "continuous" },
+            ],
+          },
+        };
+
+        isScanning = true;
+        await startWithFallbacks(config, preferredCamera);
+        updateTorchVisibility();
+        setTimeout(() => setHeight(document.body.scrollHeight + 10), 400);
+      } catch (error) {
+        await stopScannerInternal();
+        setIdleLayout();
+        updateStatus("⚠️ Kamera hatası: " + describeError(error));
+        setHeight(document.body.scrollHeight + 10);
+      } finally {
+        isStarting = false;
+      }
+    });
   }
 
   /* ---- Barkod algılandı ---- */
   async function onDetected(barcode) {
-    await stopScanner();
-    setResultLayout(barcode);
-    setTimeout(() => setHeight(document.body.scrollHeight + 10), 100);
-    sendValue(barcode);
+    return withTransition(async () => {
+      await stopScannerInternal();
+      setResultLayout(barcode);
+      setTimeout(() => setHeight(document.body.scrollHeight + 10), 100);
+      sendValue(barcode);
+    });
   }
 
   /* ---- Tekrar tara ---- */
